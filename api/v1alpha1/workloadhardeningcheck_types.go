@@ -60,10 +60,10 @@ type TargetReference struct {
 
 // SecurityContextDefaults defines the defaults for podSecurityContext and containerSecurityContext fields.
 type SecurityContextDefaults struct {
-	// PodSecurityContext defaults.
+	// Set the values for pod securityContext fields. These values will be used in all checks, and only fields not specified here will be checked dynamically.
 	Pod *PodSecurityContextDefaults `json:"pod,omitempty"`
 
-	// ContainerSecurityContext defaults.
+	// Set the values for container securityContext fields. These values will be used in all checks, and only fields not specified here will be checked dynamically.
 	Container *ContainerSecurityContextDefaults `json:"container,omitempty"`
 }
 

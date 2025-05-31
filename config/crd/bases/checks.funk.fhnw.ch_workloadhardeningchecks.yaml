@@ -58,7 +58,9 @@ spec:
                   for Pod and Container SecurityContext fields.
                 properties:
                   container:
-                    description: ContainerSecurityContext defaults.
+                    description: Set the values for container securityContext fields.
+                      These values will be used in all checks, and only fields not
+                      specified here will be checked dynamically.
                     properties:
                       allowPrivilegeEscalation:
                         type: boolean
@@ -93,7 +95,9 @@ spec:
                         type: object
                     type: object
                   pod:
-                    description: PodSecurityContext defaults.
+                    description: Set the values for pod securityContext fields. These
+                      values will be used in all checks, and only fields not specified
+                      here will be checked dynamically.
                     properties:
                       fsGroup:
                         format: int64

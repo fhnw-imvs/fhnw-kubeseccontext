@@ -2,6 +2,8 @@
 
 Keep your Kubernetes workloads in tune — secure and functional.
 
+**WIP: This project is part of a Bachelor thesis at FHNW called _Automated Kubernetes Workload hardening using a Functionality Oracle_.**
+
 ## Description
 
 The Orakel of Funk automates the testing and validation of Kubernetes workload hardening through controlled runtime experiments. 
