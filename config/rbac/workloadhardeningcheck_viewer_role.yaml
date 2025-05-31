@@ -1,0 +1,23 @@
+# permissions for end users to view workloadhardeningchecks.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+    app.kubernetes.io/managed-by: kustomize
+  name: workloadhardeningcheck-viewer-role
+rules:
+- apiGroups:
+  - checks.funk.fhnw.ch
+  resources:
+  - workloadhardeningchecks
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - checks.funk.fhnw.ch
+  resources:
+  - workloadhardeningchecks/status
+  verbs:
+  - get

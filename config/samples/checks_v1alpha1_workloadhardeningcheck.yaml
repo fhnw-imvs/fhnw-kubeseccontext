@@ -1,0 +1,9 @@
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+    app.kubernetes.io/managed-by: kustomize
+  name: workloadhardeningcheck-sample
+spec:
+  # TODO(user): Add fields here

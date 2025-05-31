@@ -1,0 +1,158 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.1
+  name: workloadhardeningchecks.checks.funk.fhnw.ch
+spec:
+  group: checks.funk.fhnw.ch
+  names:
+    kind: WorkloadHardeningCheck
+    listKind: WorkloadHardeningCheckList
+    plural: workloadhardeningchecks
+    singular: workloadhardeningcheck
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: WorkloadHardeningCheck is the Schema for the workloadhardeningchecks
+          API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: WorkloadHardeningCheckSpec defines the desired state of WorkloadHardeningCheck
+            properties:
+              baselineDuration:
+                description: BaselineDuration specifies how long to observe the baseline
+                  workload before applying hardening tests.
+                pattern: ^\d+[smh]$
+                type: string
+              runMode:
+                default: parallel
+                description: RunMode specifies whether the checks should be run in
+                  parallel or sequentially.
+                enum:
+                - parallel
+                - sequential
+                type: string
+              securityContext:
+                description: SecurityContext allows the user to define default values
+                  for Pod and Container SecurityContext fields.
+                properties:
+                  container:
+                    description: ContainerSecurityContext defaults.
+                    properties:
+                      allowPrivilegeEscalation:
+                        type: boolean
+                      capabilitiesDrop:
+                        items:
+                          type: string
+                        type: array
+                      readOnlyRootFilesystem:
+                        type: boolean
+                      runAsGroup:
+                        format: int64
+                        type: integer
+                      runAsNonRoot:
+                        type: boolean
+                      runAsUser:
+                        format: int64
+                        type: integer
+                      seccompProfile:
+                        description: SeccompProfile specifies the seccomp profile
+                          type.
+                        properties:
+                          type:
+                            description: 'Type of seccomp profile. Allowed values:
+                              RuntimeDefault, Localhost, Unconfined.'
+                            enum:
+                            - RuntimeDefault
+                            - Localhost
+                            - Unconfined
+                            type: string
+                        required:
+                        - type
+                        type: object
+                    type: object
+                  pod:
+                    description: PodSecurityContext defaults.
+                    properties:
+                      fsGroup:
+                        format: int64
+                        type: integer
+                      runAsGroup:
+                        format: int64
+                        type: integer
+                      runAsUser:
+                        format: int64
+                        type: integer
+                      seccompProfile:
+                        description: SeccompProfile type (e.g., RuntimeDefault, Localhost,
+                          Unconfined).
+                        properties:
+                          type:
+                            description: 'Type of seccomp profile. Allowed values:
+                              RuntimeDefault, Localhost, Unconfined.'
+                            enum:
+                            - RuntimeDefault
+                            - Localhost
+                            - Unconfined
+                            type: string
+                        required:
+                        - type
+                        type: object
+                      supplementalGroups:
+                        items:
+                          format: int64
+                          type: integer
+                        type: array
+                    type: object
+                type: object
+              targetRef:
+                description: TargetRef specifies the workload to be hardened.
+                properties:
+                  apiVersion:
+                    description: API version of the workload.
+                    type: string
+                  kind:
+                    description: Kind of the workload (e.g., Deployment, StatefulSet).
+                    type: string
+                  name:
+                    description: Name of the workload.
+                    type: string
+                required:
+                - apiVersion
+                - kind
+                - name
+                type: object
+            required:
+            - baselineDuration
+            - targetRef
+            type: object
+          status:
+            description: WorkloadHardeningCheckStatus defines the observed state of
+              WorkloadHardeningCheck
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

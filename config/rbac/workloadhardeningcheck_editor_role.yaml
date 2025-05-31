@@ -1,0 +1,27 @@
+# permissions for end users to edit workloadhardeningchecks.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+    app.kubernetes.io/managed-by: kustomize
+  name: workloadhardeningcheck-editor-role
+rules:
+- apiGroups:
+  - checks.funk.fhnw.ch
+  resources:
+  - workloadhardeningchecks
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - checks.funk.fhnw.ch
+  resources:
+  - workloadhardeningchecks/status
+  verbs:
+  - get
