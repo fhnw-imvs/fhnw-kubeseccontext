@@ -190,6 +190,19 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
+	err = r.setConditionBaseline(ctx, workloadHardening)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Create hardening job for baseline recording
+
+	return ctrl.Result{}, nil
+}
+
+func (r *WorkloadHardeningCheckReconciler) setConditionBaseline(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) error {
+	log := log.FromContext(ctx)
+
 	meta.SetStatusCondition(
 		&workloadHardening.Status.Conditions,
 		metav1.Condition{
@@ -199,20 +212,18 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			Message: "Recording baseline metrics",
 		},
 	)
-	if err = r.Status().Update(ctx, workloadHardening); err != nil {
+	if err := r.Status().Update(ctx, workloadHardening); err != nil {
 		log.Error(err, "Failed to update WorkloadHardeningCheck status")
-		return ctrl.Result{}, err
+		return err
 	}
 
 	// Let's re-fetch the memcached Custom Resource after updating the status so that we have the latest state
-	if err := r.Get(ctx, req.NamespacedName, workloadHardening); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
 		log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
-		return ctrl.Result{}, err
+		return err
 	}
 
-	// Create hardening job for baseline recording
-
-	return ctrl.Result{}, nil
+	return nil
 }
 
 func verifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {

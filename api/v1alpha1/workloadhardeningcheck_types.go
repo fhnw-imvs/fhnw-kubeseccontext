@@ -118,7 +118,7 @@ type WorkloadHardeningCheckStatus struct {
 // WorkloadHardeningCheck is the Schema for the workloadhardeningchecks API
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=`.status.conditions[0].status`
+// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.status==\"True\")].type"
 type WorkloadHardeningCheck struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
