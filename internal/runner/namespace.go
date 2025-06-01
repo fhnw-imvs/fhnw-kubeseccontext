@@ -18,19 +18,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+// ToDo: Decide if it's better to use an deny- or allow- list to clone the namespace
 var resourcesToSkip = []string{
 	"bindings",
 	"localsubjectaccessreviews",
 	// exclude our own resource to avoid infinite loops
-	"workloadhardeningchecks.checks.funk.fhnw.ch",
+	"workloadhardeningchecks",
 	"endpointslices",
 	"endpoints",
-}
-
-var resourceToClone = []string{
-	"deployments",
-	"statefulsets",
-	"daemonsets",
+	"events",
+	"controllerrevisions",
 }
 
 func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string) error {
@@ -52,7 +49,8 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 		return fmt.Errorf("error fetching namespace: %w", err)
 	}
 
-	resources, err := getAllResources(ctx, sourceNamespace)
+	// only get resources without ownership
+	resources, err := getTopLevelResources(ctx, sourceNamespace)
 	if err != nil {
 		return fmt.Errorf("unable to fetch all resources from %s", sourceNamespace)
 	}
@@ -63,40 +61,57 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 		"app.kubernetes.io/name":       targetNamespace,
 		"app.kubernetes.io/managed-by": "oracle-of-funk",
 	}
+
+	// ToDo: Set controllerReference for Namespace
 	err = cl.Create(ctx, targetNs)
 	if err != nil {
 		return fmt.Errorf("error creating target namespace: %w", err)
 	}
 
-	// Only  create "top level" resources. Avoid cloning pods if they are owned by a deployment end so forth
-	for resourcesType, resourcesList := range resources {
-		if !slices.Contains(resourceToClone, resourcesType) {
-			continue
-		}
+	for _, resource := range resources {
 
-		log.Info(fmt.Sprintf("cloning %s to %s", resourcesType, targetNamespace))
+		log.Info(fmt.Sprintf("cloning %s/%s to %s", resource.GetKind(), resource.GetName(), targetNamespace))
 
-		for _, resource := range resourcesList.Items {
-			// cleanup resource before cloning
-			clonedResource := resource.DeepCopy()
-			clonedResource.SetResourceVersion("")
-			clonedResource.SetSelfLink("")
-			clonedResource.SetGeneration(0)
-			clonedResource.SetNamespace(targetNamespace)
+		// cleanup resource before cloning
+		clonedResource := resource.DeepCopy()
+		clonedResource.SetResourceVersion("")
+		clonedResource.SetSelfLink("")
+		clonedResource.SetGeneration(0)
+		// override namespace!
+		clonedResource.SetNamespace(targetNamespace)
 
-			err = cl.Create(ctx, clonedResource)
-			if err != nil {
-				log.Error(err, fmt.Sprintf("error creating %s/%s in %s", resourcesType, resource.GetName(), targetNamespace))
-			} else {
-				log.Info(fmt.Sprintf("created %s/%s in %s", resourcesType, resource.GetName(), targetNamespace))
-			}
-
+		err = cl.Create(ctx, clonedResource)
+		if err != nil {
+			log.Error(err, fmt.Sprintf("error creating %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
+		} else {
+			log.Info(fmt.Sprintf("created %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
 		}
 	}
 
 	log.Info("namespace cloned", "sourceNamespace", sourceNamespace, "targetNamespace", targetNamespace)
 
 	return nil
+}
+
+func getTopLevelResources(ctx context.Context, namespace string) ([]*unstructured.Unstructured, error) {
+	//log := log.FromContext(ctx)
+
+	allResources, err := getAllResources(ctx, namespace)
+	if err != nil {
+		return nil, err
+	}
+
+	unownedResources := []*unstructured.Unstructured{}
+	for _, resourceList := range allResources {
+		for _, resource := range resourceList.Items {
+			if len(resource.GetOwnerReferences()) == 0 {
+				unownedResources = append(unownedResources, &resource)
+			}
+		}
+	}
+
+	return unownedResources, nil
+
 }
 
 // Get all resources in a namespace, this doesn't filter owned resources
