@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,6 +37,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
 )
 
 // Definitions to manage status conditions
@@ -128,7 +130,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// If the custom resource is not found then it usually means that it was deleted or not created
-			log.Info("WorkloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it.")
+			log.Info("WorkloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue the request.
@@ -152,6 +154,61 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	log.Info("targetRef ready. Starting baseline recording")
+
+	meta.SetStatusCondition(
+		&workloadHardening.Status.Conditions,
+		metav1.Condition{
+			Type:    typeWorkloadCheckStartup,
+			Status:  metav1.ConditionTrue,
+			Reason:  "CloningNamespace",
+			Message: "Cloning into baseline namespace",
+		},
+	)
+	if err = r.Status().Update(ctx, workloadHardening); err != nil {
+		log.Error(err, "Failed to update WorkloadHardeningCheck status")
+		return ctrl.Result{}, err
+	}
+
+	// Let's re-fetch the memcached Custom Resource after updating the status so that we have the latest state
+	if err := r.Get(ctx, req.NamespacedName, workloadHardening); err != nil {
+		log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+		return ctrl.Result{}, err
+	}
+
+	// create a random namespace name. They are limited to 253 chars in kubernetes, but we make it a bit shorter by default
+	// We might add an additional identifier (eg. baseline, runAsNonRoot, etc) later on to make differentiation eaiser for the user
+	base := workloadHardening.Namespace
+	if len(base) > 200 {
+		base = base[:200]
+	}
+	targetNamespace := fmt.Sprintf("%s-%s", base, utilrand.String(10))
+
+	err = runner.CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace)
+
+	if err != nil {
+		log.Error(err, fmt.Sprintf("failed to clone namespace %s", workloadHardening.Namespace))
+		return ctrl.Result{}, err
+	}
+
+	meta.SetStatusCondition(
+		&workloadHardening.Status.Conditions,
+		metav1.Condition{
+			Type:    typeWorkloadCheckBaseline,
+			Status:  metav1.ConditionTrue,
+			Reason:  "BaselineRecording",
+			Message: "Recording baseline metrics",
+		},
+	)
+	if err = r.Status().Update(ctx, workloadHardening); err != nil {
+		log.Error(err, "Failed to update WorkloadHardeningCheck status")
+		return ctrl.Result{}, err
+	}
+
+	// Let's re-fetch the memcached Custom Resource after updating the status so that we have the latest state
+	if err := r.Get(ctx, req.NamespacedName, workloadHardening); err != nil {
+		log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+		return ctrl.Result{}, err
+	}
 
 	// Create hardening job for baseline recording
 
