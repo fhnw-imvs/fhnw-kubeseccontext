@@ -6,4 +6,7 @@ metadata:
     app.kubernetes.io/managed-by: kustomize
   name: workloadhardeningcheck-sample
 spec:
-  # TODO(user): Add fields here
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: hello-node

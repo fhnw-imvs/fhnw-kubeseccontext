@@ -36,7 +36,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/controller/workload"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/controller/workload"
 	// +kubebuilder:scaffold:imports
 )
 

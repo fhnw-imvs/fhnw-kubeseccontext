@@ -31,7 +31,7 @@ type WorkloadHardeningCheckSpec struct {
 
 	// BaselineDuration specifies how long to observe the baseline workload before applying hardening tests.
 	// +kubebuilder:validation:Pattern=`^\d+[smh]$`
-	// +kubebuilder:validation:Required
+	// +kubebuilder:default="5m"
 	BaselineDuration string `json:"baselineDuration"`
 
 	// RunMode specifies whether the checks should be run in parallel or sequentially.
@@ -98,14 +98,26 @@ type SeccompProfile struct {
 
 // WorkloadHardeningCheckStatus defines the observed state of WorkloadHardeningCheck
 type WorkloadHardeningCheckStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// Represents the observations of a WorkloadHardeningCheck's current state.
+	// WorkloadHardeningCheck.status.conditions.type are: "Preparation", "Baseline", "Running", "Finished" and "Failed"
+	// WorkloadHardeningCheck.status.conditions.status are one of True, False, Unknown.
+	// WorkloadHardeningCheck.status.conditions.reason the value should be a CamelCase string and producers of specific
+	// condition types may define expected values and meanings for this field, and whether the values
+	// are considered a guaranteed API.
+	// WorkloadHardeningCheck.status.conditions.Message is a human readable message indicating details about the transition.
+	// For further information see: https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
+
+	// Conditions store the status conditions of the WorkloadHardeningCheck instances
+	// +operator-sdk:csv:customresourcedefinitions:type=status
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 
 // WorkloadHardeningCheck is the Schema for the workloadhardeningchecks API
+// +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
+// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=`.status.conditions[0].status`
 type WorkloadHardeningCheck struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
