@@ -220,6 +220,13 @@ spec:
                   - type
                   type: object
                 type: array
+              suffix:
+                description: |-
+                  Suffix used for all namespaces created during testing
+                  Could/Should probably be set from a webhook
+                type: string
+            required:
+            - suffix
             type: object
         type: object
     served: true

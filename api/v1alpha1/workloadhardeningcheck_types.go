@@ -98,6 +98,15 @@ type SeccompProfile struct {
 
 // WorkloadHardeningCheckStatus defines the observed state of WorkloadHardeningCheck
 type WorkloadHardeningCheckStatus struct {
+
+	// Suffix used for all namespaces created during testing
+	// Could/Should probably be set from a webhook
+	Suffix string `json:"suffix"`
+
+	// Recordings of all signals
+	// List of custom structs, the struct must contain a list of signals
+	// (Again a struct, containing resource recordings as well as logs) for each check/job
+
 	// Represents the observations of a WorkloadHardeningCheck's current state.
 	// WorkloadHardeningCheck.status.conditions.type are: "Preparation", "Baseline", "Running", "Finished" and "Failed"
 	// WorkloadHardeningCheck.status.conditions.status are one of True, False, Unknown.
