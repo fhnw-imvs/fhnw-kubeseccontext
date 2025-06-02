@@ -124,7 +124,22 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	log.Info("targetRef ready. Starting baseline recording")
 
+	if workloadHardening.Status.Suffix == "" {
+		workloadHardening.Status.Suffix = utilrand.String(10)
+		if err := r.Status().Update(ctx, workloadHardening); err != nil {
+			log.Error(err, "Failed to update WorkloadHardeningCheck status")
+			return ctrl.Result{}, err
+		}
+
+		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
+		if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
+			log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+			return ctrl.Result{}, err
+		}
+	}
+
 	// clone into baseline namespace
+	// Add check if we already created the baseline...
 	baselineNamespace, err := r.createBaseline(ctx, workloadHardening)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -253,7 +268,7 @@ func (r *WorkloadHardeningCheckReconciler) createBaseline(ctx context.Context, w
 	if len(base) > 200 {
 		base = base[:200]
 	}
-	targetNamespace := fmt.Sprintf("%s-%s-baseline", base, utilrand.String(10))
+	targetNamespace := fmt.Sprintf("%s-%s-baseline", base, workloadHardening.Status.Suffix)
 
 	r.Recorder.Event(
 		workloadHardening,
