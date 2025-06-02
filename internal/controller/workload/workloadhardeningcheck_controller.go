@@ -34,7 +34,9 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
@@ -120,14 +122,32 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	log.Info("targetRef ready. Starting baseline recording")
 
-	err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+	// clone into baseline namespace
+	baselineNamespace, err := r.createBaseline(ctx, workloadHardening)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	log.Info("created baseline namespace", "baselineNamespace", baselineNamespace)
+
+	// start recording metrics for target workload
+
+	// Create hardening job for baseline recording
+
+	return ctrl.Result{}, nil
+}
+
+func (r *WorkloadHardeningCheckReconciler) createBaseline(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) (string, error) {
+	log := log.FromContext(ctx)
+
+	err := r.setCondition(ctx, workloadHardening, metav1.Condition{
 		Type:    typeWorkloadCheckStartup,
 		Status:  metav1.ConditionTrue,
 		Reason:  "CloningNamespace",
 		Message: "Cloning into baseline namespace",
 	})
 	if err != nil {
-		return ctrl.Result{}, err
+		return "", err
 	}
 
 	// create a random namespace name. They are limited to 253 chars in kubernetes, but we make it a bit shorter by default
@@ -136,28 +156,22 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	if len(base) > 200 {
 		base = base[:200]
 	}
-	targetNamespace := fmt.Sprintf("%s-%s", base, utilrand.String(10))
+	targetNamespace := fmt.Sprintf("%s-%s-baseline", base, utilrand.String(10))
 
 	err = runner.CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace)
 
 	if err != nil {
 		log.Error(err, fmt.Sprintf("failed to clone namespace %s", workloadHardening.Namespace))
-		return ctrl.Result{}, err
+		return "", err
 	}
 
-	err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+	return targetNamespace, r.setCondition(ctx, workloadHardening, metav1.Condition{
 		Type:    typeWorkloadCheckBaseline,
 		Status:  metav1.ConditionTrue,
 		Reason:  "BaselineRecording",
 		Message: "Recording baseline metrics",
 	})
-	if err != nil {
-		return ctrl.Result{}, err
-	}
 
-	// Create hardening job for baseline recording
-
-	return ctrl.Result{}, nil
 }
 
 // Verify if the targetRef workload is up & running
@@ -260,5 +274,15 @@ func (r *WorkloadHardeningCheckReconciler) SetupWithManager(mgr ctrl.Manager) er
 		Owns(&corev1.Namespace{}).
 		// ToDo: Decide if configurable
 		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
+		WithEventFilter(ignoreStatusChanges()).
 		Complete(r)
+}
+
+func ignoreStatusChanges() predicate.Predicate {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			// Ignore updates to CR status in which case metadata.Generation does not change
+			return e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration()
+		},
+	}
 }
