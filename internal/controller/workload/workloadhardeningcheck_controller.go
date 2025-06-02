@@ -27,6 +27,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
@@ -132,9 +133,82 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// start recording metrics for target workload
 
+	err = r.recordSignals(ctx, workloadHardening, baselineNamespace)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
+	log.Info("recorded baseline signals", "baselineNamespace", baselineNamespace)
+
 	// Create hardening job for baseline recording
 
 	return ctrl.Result{}, nil
+}
+
+func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string) error {
+	log := log.FromContext(ctx)
+
+	err := r.setCondition(ctx, workloadHardening, metav1.Condition{
+		Type:    typeWorkloadCheckBaseline,
+		Status:  metav1.ConditionTrue,
+		Reason:  "BaselineRecording",
+		Message: "Recording baseline metrics",
+	})
+	if err != nil {
+		return err
+	}
+
+	r.Recorder.Event(
+		workloadHardening,
+		corev1.EventTypeNormal,
+		"BaselineRecording",
+		fmt.Sprintf(
+			"Recording baseline signals in %s for %s/%s",
+			targetNamespace,
+			workloadHardening.Spec.TargetRef.Kind,
+			workloadHardening.Spec.TargetRef.Name,
+		),
+	)
+
+	labelSelector, err := r.getLabelSelector(ctx, workloadHardening)
+	if err != nil {
+		return err
+	}
+
+	// get pods under observation. They need to be managed by the targetRef workload
+	pods := &corev1.PodList{}
+	err = r.List(ctx, pods, &client.ListOptions{Namespace: targetNamespace, LabelSelector: labelSelector})
+	if err != nil {
+		log.Error(err, "error fetching pods")
+		return err
+	}
+
+	log.Info(
+		fmt.Sprintf("fetched pods matching workload under test in target namespace %s", targetNamespace),
+		"numberOfPods", len(pods.Items),
+	)
+
+	return nil
+}
+
+func (r *WorkloadHardeningCheckReconciler) getLabelSelector(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) (labels.Selector, error) {
+	workloadUnderTest, err := r.getWorkloadUnderTest(ctx, workloadHardening)
+	if err != nil {
+		return nil, err
+	}
+
+	var labelSelector *metav1.LabelSelector
+
+	switch v := (*workloadUnderTest).(type) {
+	case *appsv1.Deployment:
+		labelSelector = v.Spec.Selector
+	case *appsv1.StatefulSet:
+		labelSelector = v.Spec.Selector
+	case *appsv1.DaemonSet:
+		labelSelector = v.Spec.Selector
+	}
+
+	return metav1.LabelSelectorAsSelector(labelSelector)
 }
 
 func (r *WorkloadHardeningCheckReconciler) createBaseline(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) (string, error) {
@@ -158,6 +232,13 @@ func (r *WorkloadHardeningCheckReconciler) createBaseline(ctx context.Context, w
 	}
 	targetNamespace := fmt.Sprintf("%s-%s-baseline", base, utilrand.String(10))
 
+	r.Recorder.Event(
+		workloadHardening,
+		corev1.EventTypeNormal,
+		"BaselineCreate",
+		fmt.Sprintf("Cloning source namespace %s into baseline namespace %s", workloadHardening.Namespace, targetNamespace),
+	)
+
 	err = runner.CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace)
 
 	if err != nil {
@@ -166,21 +247,17 @@ func (r *WorkloadHardeningCheckReconciler) createBaseline(ctx context.Context, w
 	}
 
 	return targetNamespace, r.setCondition(ctx, workloadHardening, metav1.Condition{
-		Type:    typeWorkloadCheckBaseline,
+		Type:    typeWorkloadCheckStartup,
 		Status:  metav1.ConditionTrue,
-		Reason:  "BaselineRecording",
-		Message: "Recording baseline metrics",
+		Reason:  "NamespaceCloned",
+		Message: "Cloned baseline namespace",
 	})
 
 }
 
-// Verify if the targetRef workload is up & running
-// The validation that the workload exists at all (and matches the currently supported kinds)
-// should be moved to a webhook
-func (r *WorkloadHardeningCheckReconciler) verifyWorkloadTargetRef(
-	ctx context.Context,
+func (r *WorkloadHardeningCheckReconciler) getWorkloadUnderTest(ctx context.Context,
 	workloadHardening *checksv1alpha1.WorkloadHardeningCheck,
-) (bool, error) {
+) (*client.Object, error) {
 	log := log.FromContext(ctx)
 
 	// Verify namespace contains target workload
@@ -194,21 +271,45 @@ func (r *WorkloadHardeningCheckReconciler) verifyWorkloadTargetRef(
 		workloadUnderTest = &appsv1.DaemonSet{}
 	}
 
-	err := r.Get(ctx, types.NamespacedName{Namespace: workloadHardening.Namespace, Name: workloadHardening.Spec.TargetRef.Name}, workloadUnderTest)
+	err := r.Get(
+		ctx,
+		types.NamespacedName{
+			Namespace: workloadHardening.Namespace,
+			Name:      workloadHardening.Spec.TargetRef.Name,
+		},
+		workloadUnderTest,
+	)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// If the custom resource is not found then it usually means that it was deleted or not created
 			log.Info("workloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
-			return false, fmt.Errorf("workloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
+			return nil, fmt.Errorf("workloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
 		}
 		// Error reading the object - requeue the request.
 		log.Error(err, "failed to get workloadHardeningCheck.Spec.TargetRef, requeing")
-		return false, fmt.Errorf("failed to get workloadHardeningCheck.Spec.TargetRef: %w", err)
+		return nil, fmt.Errorf("failed to get workloadHardeningCheck.Spec.TargetRef: %w", err)
 	}
 	log.Info("TargetRef found")
 
+	return &workloadUnderTest, nil
+}
+
+// Verify if the targetRef workload is up & running
+// The validation that the workload exists at all (and matches the currently supported kinds)
+// should be moved to a webhook
+func (r *WorkloadHardeningCheckReconciler) verifyWorkloadTargetRef(
+	ctx context.Context,
+	workloadHardening *checksv1alpha1.WorkloadHardeningCheck,
+) (bool, error) {
+	//log := log.FromContext(ctx)
+
+	workloadUnderTest, err := r.getWorkloadUnderTest(ctx, workloadHardening)
+	if err != nil {
+		return false, err
+	}
+
 	// Verify targetRef is running/valid
-	ready, err := verifySuccessfullyRunning(workloadUnderTest)
+	ready, err := verifySuccessfullyRunning(*workloadUnderTest)
 	if err != nil {
 		return false, fmt.Errorf("kind of workloadUnderTest not supported: %w", err)
 	}
@@ -220,6 +321,12 @@ func (r *WorkloadHardeningCheckReconciler) verifyWorkloadTargetRef(
 func (r *WorkloadHardeningCheckReconciler) setCondition(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, condition metav1.Condition) error {
 
 	log := log.FromContext(ctx)
+
+	// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
+	if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
+		log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+		return err
+	}
 
 	// Set all current conditions to ConditionFalse
 	for _, cond := range workloadHardening.Status.Conditions {
@@ -245,7 +352,7 @@ func (r *WorkloadHardeningCheckReconciler) setCondition(ctx context.Context, wor
 		return err
 	}
 
-	// Let's re-fetch the memcached Custom Resource after updating the status so that we have the latest state
+	// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
 	if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
 		log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 		return err
