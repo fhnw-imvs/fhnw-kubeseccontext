@@ -18,7 +18,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    - jsonPath: .status.conditions[?(@.status=="True")].type
+    - jsonPath: .status.conditions[?(@.status=="True")].message
       name: Status
       type: string
     name: v1alpha1
@@ -156,7 +156,6 @@ spec:
                 - name
                 type: object
             required:
-            - baselineDuration
             - targetRef
             type: object
           status:

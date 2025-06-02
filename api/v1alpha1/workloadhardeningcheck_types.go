@@ -32,7 +32,7 @@ type WorkloadHardeningCheckSpec struct {
 	// BaselineDuration specifies how long to observe the baseline workload before applying hardening tests.
 	// +kubebuilder:validation:Pattern=`^\d+[smh]$`
 	// +kubebuilder:default="5m"
-	BaselineDuration string `json:"baselineDuration"`
+	BaselineDuration string `json:"baselineDuration,omitempty"`
 
 	// RunMode specifies whether the checks should be run in parallel or sequentially.
 	// +kubebuilder:validation:Enum=parallel;sequential
@@ -118,7 +118,7 @@ type WorkloadHardeningCheckStatus struct {
 // WorkloadHardeningCheck is the Schema for the workloadhardeningchecks API
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.status==\"True\")].type"
+// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.status==\"True\")].message"
 type WorkloadHardeningCheck struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`

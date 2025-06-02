@@ -1,0 +1,225 @@
+package runner
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	statsapi "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
+	"sigs.k8s.io/controller-runtime/pkg/client/config"
+)
+
+var podMetrics = map[string]map[types.UID]statsapi.PodStats{}
+var knownPods = []types.UID{}
+var podMetricsLastUpdate = time.Time{}
+var nodePodMetricsLastUpdate = map[string]time.Time{}
+
+var refreshMutex sync.Mutex
+
+type PodError struct {
+	message string
+	Pod     corev1.Pod
+}
+
+func (e *PodError) Error() string {
+	return fmt.Sprintf("pod %s: %v", e.Pod.Name, e.message)
+}
+
+func GetClientset() (*kubernetes.Clientset, error) {
+
+	// create the clientset
+	clientset, err := kubernetes.NewForConfig(config.GetConfigOrDie())
+	if err != nil {
+		return nil, fmt.Errorf("couldn't create kubernetes client: %v", err)
+	}
+
+	return clientset, nil
+
+}
+
+func GetNodes() (*corev1.NodeList, error) {
+	client, err := GetClientset()
+	if err != nil {
+		return nil, fmt.Errorf("couldn't get kubernetes client: %v", err)
+	}
+
+	nodes, err := client.CoreV1().Nodes().List(context.TODO(), metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("couldn't list nodes: %v", err)
+	}
+
+	return nodes, nil
+}
+
+func GetPodResourceUsage(pod corev1.Pod) (*statsapi.PodStats, error) {
+
+	if _, ok := nodePodMetricsLastUpdate[pod.Spec.NodeName]; !ok {
+		return nil, &PodError{Pod: pod, message: "pod metrics not initialized"}
+	}
+
+	if podStat, ok := podMetrics[pod.Spec.NodeName][pod.ObjectMeta.UID]; ok {
+		return &podStat, nil
+	} else {
+		return nil, &PodError{Pod: pod, message: "pod not found in metrics"}
+	}
+}
+
+func RefreshPodMetrics() error {
+	refreshMutex.Lock()
+	defer refreshMutex.Unlock()
+
+	if time.Since(podMetricsLastUpdate) < 30*time.Second {
+		return nil
+	}
+
+	nodes, err := GetNodes()
+	if err != nil {
+		return err
+	}
+
+	knownPods = []types.UID{}
+
+	var wg sync.WaitGroup
+	wg.Add(len(nodes.Items))
+
+	for _, node := range nodes.Items {
+		// update nodes in parallel
+		go func() {
+			RefreshPodMetricsPerNode(node.Name)
+			wg.Done()
+		}()
+	}
+
+	wg.Wait()
+
+	podMetricsLastUpdate = time.Now()
+
+	return nil
+
+}
+
+func RefreshPodMetricsPerNode(nodeName string) error {
+	if time.Since(podMetricsLastUpdate) < 10*time.Second {
+		fmt.Println("Pod metrics already refreshed within the last 10 seconds")
+		return nil
+	}
+
+	// Reset the pod metrics map and known pods
+	nodePodMetrics := map[types.UID]statsapi.PodStats{}
+
+	nodeMetrics, err := getNodeMetrics(nodeName)
+	if err != nil {
+		return err
+	}
+
+	for _, pod := range nodeMetrics.Pods {
+		nodePodMetrics[types.UID(pod.PodRef.UID)] = pod
+		knownPods = append(knownPods, types.UID(pod.PodRef.UID))
+	}
+
+	podMetrics[nodeName] = nodePodMetrics
+
+	nodePodMetricsLastUpdate[nodeName] = time.Now()
+
+	return nil
+
+}
+
+func getNodeMetrics(nodeName string) (*statsapi.Summary, error) {
+	config := config.GetConfigOrDie()
+
+	client, _ := rest.HTTPClientFor(config)
+	apiHost := config.Host
+
+	req, err := client.Get(apiHost + "/api/v1/nodes/" + nodeName + "/proxy/stats/summary")
+	if err != nil {
+		return nil, nil
+	}
+	defer req.Body.Close()
+
+	if req.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to get node metrics: %s", req.Status)
+	}
+
+	var metrics statsapi.Summary
+	err = json.NewDecoder(req.Body).Decode(&metrics)
+	if err != nil {
+		return nil, err
+	}
+
+	return &metrics, nil
+}
+
+type ResourceUsageRecord struct {
+	Time   time.Time `json:"ts"`
+	CPU    uint64    `json:"cpu"`
+	Memory uint64    `json:"memory"`
+}
+
+type RecordedMetrics struct {
+	Pod      string                            `json:"pod"`
+	Start    time.Time                         `json:"start_time"`
+	End      time.Time                         `json:"end_time"`
+	Interval int                               `json:"interval"`
+	Duration int                               `json:"duration"`
+	Usage    map[time.Time]ResourceUsageRecord `json:"usage"`
+}
+
+func RecordMetrics(pod *corev1.Pod, duration, interval int) (*RecordedMetrics, error) {
+
+	recordedMetrics := map[time.Time]ResourceUsageRecord{}
+
+	start := time.Now()
+	end := start.Add(time.Duration(duration) * time.Second)
+	fmt.Println("Recording resource usage for pod:", pod.Name)
+
+	for {
+		err := RefreshPodMetricsPerNode(pod.Spec.NodeName)
+		if err != nil {
+			return nil, err
+		}
+		podResources, err := GetPodResourceUsage(*pod)
+
+		if err != nil {
+			fmt.Println("error getting pod resource usage: ", err, pod.UID)
+			// wait for 5 seconds and try again
+			time.Sleep(time.Duration(5) * time.Second)
+			continue
+		}
+		metric := ResourceUsageRecord{
+			Time:   time.Now(),
+			CPU:    *podResources.CPU.UsageNanoCores,
+			Memory: *podResources.Memory.WorkingSetBytes,
+		}
+		recordedMetrics[metric.Time] = metric
+
+		fmt.Printf("Time: %s, CPU: %d, Memory: %d\n", metric.Time.Format(time.RFC3339), metric.CPU, metric.Memory)
+
+		// break loop if the next interval is after the end time
+		if time.Now().Add(time.Duration(interval) * time.Second).After(end) {
+			break
+		}
+
+		time.Sleep(time.Duration(interval) * time.Second)
+	}
+
+	// write to json file
+	recordedMetricsData := RecordedMetrics{
+		Pod:      pod.Name,
+		Start:    start,
+		End:      end,
+		Interval: interval,
+		Duration: duration,
+		Usage:    recordedMetrics,
+	}
+
+	return &recordedMetricsData, nil
+}

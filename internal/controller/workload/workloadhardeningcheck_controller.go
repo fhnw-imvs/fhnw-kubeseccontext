@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -187,6 +188,28 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 		fmt.Sprintf("fetched pods matching workload under test in target namespace %s", targetNamespace),
 		"numberOfPods", len(pods.Items),
 	)
+
+	var wg sync.WaitGroup
+	wg.Add(len(pods.Items))
+	duration, _ := time.ParseDuration(workloadHardening.Spec.BaselineDuration)
+	for _, pod := range pods.Items {
+		go func() {
+			recordedMetrics, err := runner.RecordMetrics(&pod, int(duration.Seconds()), 15)
+			if err != nil {
+				log.Error(err, "failed recording metrics")
+			} else {
+				log.Info(
+					"recorded metrics",
+					"pod", pod.Name,
+					"values", recordedMetrics.Usage,
+				)
+			}
+			wg.Done()
+
+		}()
+	}
+
+	wg.Wait()
 
 	return nil
 }
