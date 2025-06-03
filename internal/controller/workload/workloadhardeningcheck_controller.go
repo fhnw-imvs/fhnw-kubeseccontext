@@ -31,7 +31,6 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -97,7 +96,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// Let's just set the status as Unknown when no status is available
-	if workloadHardening.Status.Conditions == nil || len(workloadHardening.Status.Conditions) == 0 {
+	if len(workloadHardening.Status.Conditions) == 0 {
 		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
 			Type:    typeWorkloadCheckStartup,
 			Status:  metav1.ConditionUnknown,
@@ -123,20 +122,6 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	log.Info("targetRef ready. Starting baseline recording")
-
-	if workloadHardening.Status.Suffix == "" {
-		workloadHardening.Status.Suffix = utilrand.String(10)
-		if err := r.Status().Update(ctx, workloadHardening); err != nil {
-			log.Error(err, "Failed to update WorkloadHardeningCheck status")
-			return ctrl.Result{}, err
-		}
-
-		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
-		if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
-			log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
-			return ctrl.Result{}, err
-		}
-	}
 
 	baselineNamespaceName := generateTargetNamespaceName(*workloadHardening, "baseline")
 
