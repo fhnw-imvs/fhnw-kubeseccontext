@@ -22,16 +22,17 @@ import (
 var resourcesToSkip = []string{
 	"bindings",
 	"localsubjectaccessreviews",
-	// exclude our own resource to avoid infinite loops
-	"workloadhardeningchecks",
 	"endpointslices",
 	"endpoints",
 	"events",
+	"podmetrics",
 	"controllerrevisions",
+	// exclude our own resource to avoid infinite loops
+	"workloadhardeningchecks",
 }
 
 func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string) error {
-	log := log.FromContext(ctx)
+	log := log.FromContext(ctx).WithName("runner")
 
 	// check if targetNamespace already exists
 	cl, err := client.New(config.GetConfigOrDie(), client.Options{})
@@ -43,7 +44,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 
 	// we expect at least a NotFound error here, otherwise the namespace already exists, and we don't want to override it
 	if err == nil {
-		return fmt.Errorf("target namespace %s already exists. aborting", targetNamespace)
+		return fmt.Errorf("target namespace already exists %s", targetNamespace)
 	}
 	if !apierrors.IsNotFound(err) {
 		return fmt.Errorf("error fetching namespace: %w", err)
@@ -70,7 +71,13 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 
 	for _, resource := range resources {
 
-		log.Info(fmt.Sprintf("cloning %s/%s to %s", resource.GetKind(), resource.GetName(), targetNamespace))
+		// Skip resources which automatically created in each namespace
+		if (resource.GetKind() == "ServiceAccount" && resource.GetName() == "default") ||
+			(resource.GetKind() == "ConfigMap" && resource.GetName() == "kube-root-ca.crt") {
+			continue
+		}
+
+		log.V(1).Info(fmt.Sprintf("cloning %s/%s to %s", resource.GetKind(), resource.GetName(), targetNamespace))
 
 		// cleanup resource before cloning
 		clonedResource := resource.DeepCopy()
@@ -84,7 +91,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 		if err != nil {
 			log.Error(err, fmt.Sprintf("error creating %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
 		} else {
-			log.Info(fmt.Sprintf("created %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
+			log.V(1).Info(fmt.Sprintf("created %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
 		}
 	}
 
@@ -94,7 +101,6 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 }
 
 func getTopLevelResources(ctx context.Context, namespace string) ([]*unstructured.Unstructured, error) {
-	//log := log.FromContext(ctx)
 
 	allResources, err := getAllResources(ctx, namespace)
 	if err != nil {
@@ -118,7 +124,7 @@ func getTopLevelResources(ctx context.Context, namespace string) ([]*unstructure
 // First we need to use a discovery client to get all namespaced resource types
 // Afterwards we can use a dynamic client, to load resources from any type into Unstructred objects
 func getAllResources(ctx context.Context, namespace string) (map[string]*unstructured.UnstructuredList, error) {
-	log := log.FromContext(ctx)
+	log := log.FromContext(ctx).WithName("runner")
 
 	dynamicClient, err := dynamic.NewForConfig(config.GetConfigOrDie())
 	if err != nil {
@@ -142,23 +148,28 @@ func getAllResources(ctx context.Context, namespace string) (map[string]*unstruc
 	resources := make(map[string]*unstructured.UnstructuredList)
 	for _, resourceList := range namespacedResources {
 		if len(resourceList.APIResources) == 0 {
-			log.Info("no resources found for group version", "groupVersion", resourceList.GroupVersion)
+			log.V(2).Info("no resources found for group version", "groupVersion", resourceList.GroupVersion)
 			continue
 		}
 
 		for _, resourceType := range resourceList.APIResources {
 			if !resourceType.Namespaced {
-				log.Info("skipping non-namespaced resource", "resourceType", resourceType.Name)
+				log.V(2).Info("skipping non-namespaced resource", "resourceType", resourceType.Name)
 				continue
 			}
 
-			if slices.Contains(resourcesToSkip, resourceType.Name) || strings.Contains(resourceType.Name, "/") {
-				log.Info("skipping resource", "resourceName", resourceType.Name)
+			// Skip all resources in the metrics group
+			if strings.Contains(resourceType.Group, "metrics") {
+				continue
+			}
+
+			if slices.Contains(resourcesToSkip, strings.ToLower(resourceType.Name)) || strings.Contains(resourceType.Name, "/") {
+				log.V(2).Info("skipping resource", "resourceName", resourceType.Name)
 				continue
 			}
 			groupVersion, err := schema.ParseGroupVersion(resourceList.GroupVersion)
 			if err != nil {
-				log.Info("error parsing group version", "groupVersion", resourceList.GroupVersion)
+				log.Error(err, "error parsing group version", "groupVersion", resourceList.GroupVersion)
 				continue
 			}
 
@@ -171,14 +182,14 @@ func getAllResources(ctx context.Context, namespace string) (map[string]*unstruc
 			resourceObjects, err := dynamicClient.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{})
 
 			if err != nil {
-				log.Info("error listing resources", "kind", gvr.String())
+				log.Error(err, "error listing resources", "kind", gvr.String())
 				continue
 			}
 			if len(resourceObjects.Items) == 0 {
-				log.Info("no resources found for", "kind", gvr.String())
+				log.V(1).Info("no resources found for", "kind", gvr.String())
 				continue
 			}
-			log.Info(fmt.Sprintf("found %d resources for: %s\n", len(resourceObjects.Items), gvr.String()))
+			log.V(1).Info(fmt.Sprintf("found %d resources for: %s\n", len(resourceObjects.Items), gvr.String()))
 
 			if _, ok := resources[resourceType.Name]; !ok {
 				resources[resourceType.Name] = &unstructured.UnstructuredList{}

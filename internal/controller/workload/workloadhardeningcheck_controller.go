@@ -138,27 +138,53 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		}
 	}
 
-	// clone into baseline namespace
-	// Add check if we already created the baseline...
-	baselineNamespace, err := r.createBaseline(ctx, workloadHardening)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
+	baselineNamespaceName := generateTargetNamespaceName(*workloadHardening, "baseline")
 
-	log.Info("created baseline namespace", "baselineNamespace", baselineNamespace)
+	if !r.namespaceExists(ctx, baselineNamespaceName) {
+		// clone into baseline namespace
+		// Add check if we already created the baseline...
+		baselineNamespaceName, err = r.createBaselineNamespace(ctx, workloadHardening)
+		if err != nil {
+			if strings.Contains(err.Error(), "target namespace already exists") {
+				return ctrl.Result{}, nil
+			}
+			return ctrl.Result{}, err
+		}
+
+		log.Info("created baseline namespace", "baselineNamespace", baselineNamespaceName)
+	}
 
 	// start recording metrics for target workload
-
-	err = r.recordSignals(ctx, workloadHardening, baselineNamespace)
+	err = r.recordSignals(ctx, workloadHardening, baselineNamespaceName)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
 
-	log.Info("recorded baseline signals", "baselineNamespace", baselineNamespace)
+	log.Info("recorded baseline signals", "baselineNamespace", baselineNamespaceName)
 
 	// Create hardening job for baseline recording
 
 	return ctrl.Result{}, nil
+}
+
+func (r *WorkloadHardeningCheckReconciler) namespaceExists(ctx context.Context, namespaceName string) bool {
+	targetNs := &corev1.Namespace{}
+	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
+
+	return !apierrors.IsNotFound(err)
+}
+
+func generateTargetNamespaceName(
+	workloadHardening checksv1alpha1.WorkloadHardeningCheck,
+	checkName string,
+) string {
+	// create a random namespace name. They are limited to 253 chars in kubernetes, but we make it a bit shorter by default
+	// We might add an additional identifier (eg. baseline, runAsNonRoot, etc) later on to make differentiation eaiser for the user
+	base := workloadHardening.Namespace
+	if len(base) > 200 {
+		base = base[:200]
+	}
+	return fmt.Sprintf("%s-%s-%s", base, workloadHardening.Status.Suffix, checkName)
 }
 
 func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string) error {
@@ -168,7 +194,7 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 		Type:    typeWorkloadCheckBaseline,
 		Status:  metav1.ConditionTrue,
 		Reason:  "BaselineRecording",
-		Message: "Recording baseline metrics",
+		Message: "Recording baseline signals",
 	})
 	if err != nil {
 		return err
@@ -204,12 +230,16 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 		"numberOfPods", len(pods.Items),
 	)
 
+	startTime := time.Now()
+
 	var wg sync.WaitGroup
 	wg.Add(len(pods.Items))
 	duration, _ := time.ParseDuration(workloadHardening.Spec.BaselineDuration)
+
+	// Pass results using a channel
 	for _, pod := range pods.Items {
 		go func() {
-			recordedMetrics, err := runner.RecordMetrics(&pod, int(duration.Seconds()), 15)
+			recordedMetrics, err := runner.RecordMetrics(ctx, &pod, int(duration.Seconds()), 15)
 			if err != nil {
 				log.Error(err, "failed recording metrics")
 			} else {
@@ -225,6 +255,36 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	}
 
 	wg.Wait()
+
+	endTime := time.Now()
+
+	// ToDo: Why?!? setCondition already updates it, and it acting on a pointer, shouldn't this also update the ref we have in here?
+	if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
+		log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+		return err
+	}
+
+	meta.SetStatusCondition(
+		&workloadHardening.Status.Conditions,
+		metav1.Condition{
+			Type:    typeWorkloadCheckBaseline,
+			Status:  metav1.ConditionTrue,
+			Reason:  "BaselineRecorded",
+			Message: "Basline signals recorded",
+		},
+	)
+
+	workloadHardening.Status.BaselineRecording = &checksv1alpha1.WorkloadRecording{
+		Type:      "Baseline",
+		Success:   true,
+		StartTime: metav1.NewTime(startTime),
+		EndTime:   metav1.NewTime(endTime),
+	}
+
+	if err := r.Status().Update(ctx, workloadHardening); err != nil {
+		log.Error(err, "Failed to update WorkloadHardeningCheck status")
+		return err
+	}
 
 	return nil
 }
@@ -249,7 +309,7 @@ func (r *WorkloadHardeningCheckReconciler) getLabelSelector(ctx context.Context,
 	return metav1.LabelSelectorAsSelector(labelSelector)
 }
 
-func (r *WorkloadHardeningCheckReconciler) createBaseline(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) (string, error) {
+func (r *WorkloadHardeningCheckReconciler) createBaselineNamespace(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) (string, error) {
 	log := log.FromContext(ctx)
 
 	err := r.setCondition(ctx, workloadHardening, metav1.Condition{
@@ -262,13 +322,7 @@ func (r *WorkloadHardeningCheckReconciler) createBaseline(ctx context.Context, w
 		return "", err
 	}
 
-	// create a random namespace name. They are limited to 253 chars in kubernetes, but we make it a bit shorter by default
-	// We might add an additional identifier (eg. baseline, runAsNonRoot, etc) later on to make differentiation eaiser for the user
-	base := workloadHardening.Namespace
-	if len(base) > 200 {
-		base = base[:200]
-	}
-	targetNamespace := fmt.Sprintf("%s-%s-baseline", base, workloadHardening.Status.Suffix)
+	targetNamespace := generateTargetNamespaceName(*workloadHardening, "baseline")
 
 	r.Recorder.Event(
 		workloadHardening,

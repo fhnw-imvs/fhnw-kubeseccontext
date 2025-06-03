@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"k8s.io/client-go/rest"
 	statsapi "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 var podMetrics = map[string]map[types.UID]statsapi.PodStats{}
@@ -33,20 +35,8 @@ func (e *PodError) Error() string {
 	return fmt.Sprintf("pod %s: %v", e.Pod.Name, e.message)
 }
 
-func GetClientset() (*kubernetes.Clientset, error) {
-
-	// create the clientset
-	clientset, err := kubernetes.NewForConfig(config.GetConfigOrDie())
-	if err != nil {
-		return nil, fmt.Errorf("couldn't create kubernetes client: %v", err)
-	}
-
-	return clientset, nil
-
-}
-
 func GetNodes() (*corev1.NodeList, error) {
-	client, err := GetClientset()
+	client, err := kubernetes.NewForConfig(config.GetConfigOrDie())
 	if err != nil {
 		return nil, fmt.Errorf("couldn't get kubernetes client: %v", err)
 	}
@@ -72,7 +62,7 @@ func GetPodResourceUsage(pod corev1.Pod) (*statsapi.PodStats, error) {
 	}
 }
 
-func RefreshPodMetrics() error {
+func RefreshPodMetrics(ctx context.Context) error {
 	refreshMutex.Lock()
 	defer refreshMutex.Unlock()
 
@@ -93,7 +83,7 @@ func RefreshPodMetrics() error {
 	for _, node := range nodes.Items {
 		// update nodes in parallel
 		go func() {
-			RefreshPodMetricsPerNode(node.Name)
+			RefreshPodMetricsPerNode(ctx, node.Name)
 			wg.Done()
 		}()
 	}
@@ -106,7 +96,7 @@ func RefreshPodMetrics() error {
 
 }
 
-func RefreshPodMetricsPerNode(nodeName string) error {
+func RefreshPodMetricsPerNode(ctx context.Context, nodeName string) error {
 	if time.Since(podMetricsLastUpdate) < 10*time.Second {
 		fmt.Println("Pod metrics already refreshed within the last 10 seconds")
 		return nil
@@ -115,7 +105,7 @@ func RefreshPodMetricsPerNode(nodeName string) error {
 	// Reset the pod metrics map and known pods
 	nodePodMetrics := map[types.UID]statsapi.PodStats{}
 
-	nodeMetrics, err := getNodeMetrics(nodeName)
+	nodeMetrics, err := getNodeMetrics(ctx, nodeName)
 	if err != nil {
 		return err
 	}
@@ -133,7 +123,8 @@ func RefreshPodMetricsPerNode(nodeName string) error {
 
 }
 
-func getNodeMetrics(nodeName string) (*statsapi.Summary, error) {
+func getNodeMetrics(ctx context.Context, nodeName string) (*statsapi.Summary, error) {
+	log := log.FromContext(ctx).WithName("runner")
 	config := config.GetConfigOrDie()
 
 	client, _ := rest.HTTPClientFor(config)
@@ -141,7 +132,12 @@ func getNodeMetrics(nodeName string) (*statsapi.Summary, error) {
 
 	req, err := client.Get(apiHost + "/api/v1/nodes/" + nodeName + "/proxy/stats/summary")
 	if err != nil {
-		return nil, nil
+		log.Error(
+			err,
+			"couldn't fetch metrics",
+			"node.name", nodeName,
+		)
+		return nil, err
 	}
 	defer req.Body.Close()
 
@@ -173,27 +169,33 @@ type RecordedMetrics struct {
 	Usage    map[time.Time]ResourceUsageRecord `json:"usage"`
 }
 
-func RecordMetrics(pod *corev1.Pod, duration, interval int) (*RecordedMetrics, error) {
+func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int) (*RecordedMetrics, error) {
+	log := log.FromContext(ctx).WithName("runner")
 
 	recordedMetrics := map[time.Time]ResourceUsageRecord{}
 
 	start := time.Now()
 	end := start.Add(time.Duration(duration) * time.Second)
-	fmt.Println("Recording resource usage for pod:", pod.Name)
+	log.Info("Recording resource usage for pod", "podName", pod.Name)
 
 	for {
-		err := RefreshPodMetricsPerNode(pod.Spec.NodeName)
+		err := RefreshPodMetricsPerNode(ctx, pod.Spec.NodeName)
 		if err != nil {
 			return nil, err
 		}
 		podResources, err := GetPodResourceUsage(*pod)
 
 		if err != nil {
-			fmt.Println("error getting pod resource usage: ", err, pod.UID)
+			if strings.Contains(err.Error(), "pod not found in metrics") {
+				log.V(2).Info("pod not yet found in metrics, retry in 5 seconds")
+			} else {
+				log.Error(err, "error getting pod resource usage", "pod.name", pod.Name, "pod.uid", pod.UID)
+			}
 			// wait for 5 seconds and try again
 			time.Sleep(time.Duration(5) * time.Second)
 			continue
 		}
+
 		metric := ResourceUsageRecord{
 			Time:   time.Now(),
 			CPU:    *podResources.CPU.UsageNanoCores,
@@ -201,7 +203,13 @@ func RecordMetrics(pod *corev1.Pod, duration, interval int) (*RecordedMetrics, e
 		}
 		recordedMetrics[metric.Time] = metric
 
-		fmt.Printf("Time: %s, CPU: %d, Memory: %d\n", metric.Time.Format(time.RFC3339), metric.CPU, metric.Memory)
+		log.V(3).Info(
+			"Recorded metrics",
+			"pod.name", pod.Name,
+			"pod.uid", pod.UID,
+			"nanoCpu", metric.CPU,
+			"memoryBytes", metric.Memory,
+		)
 
 		// break loop if the next interval is after the end time
 		if time.Now().Add(time.Duration(interval) * time.Second).After(end) {
@@ -211,7 +219,6 @@ func RecordMetrics(pod *corev1.Pod, duration, interval int) (*RecordedMetrics, e
 		time.Sleep(time.Duration(interval) * time.Second)
 	}
 
-	// write to json file
 	recordedMetricsData := RecordedMetrics{
 		Pod:      pod.Name,
 		Start:    start,

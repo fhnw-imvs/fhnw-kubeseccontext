@@ -103,9 +103,9 @@ type WorkloadHardeningCheckStatus struct {
 	// Could/Should probably be set from a webhook
 	Suffix string `json:"suffix,omitempty"`
 
-	BaselineRecording WorkloadRecording `json:"baselineRecording,omitempty"`
+	BaselineRecording *WorkloadRecording `json:"baselineRecording,omitempty"`
 
-	CheckRecordings []WorkloadRecording `json:"checkRecordings,omitempty"`
+	CheckRecordings []*WorkloadRecording `json:"checkRecordings,omitempty"`
 
 	// Recordings of all signals
 	// List of custom structs, the struct must contain a list of signals
@@ -134,11 +134,18 @@ type WorkloadRecording struct {
 	// Indicates wether this configuration ran successfully or not
 	Success bool `json:"success,omitempty"`
 
-	// The podSecurityContext that was used during the specific check run
-	PodSecurityContext PodSecurityContextDefaults `json:"podSecurityContext,omitempty"`
+	// Time the recording started at
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Format=date-time
+	StartTime metav1.Time `json:"startTime,omitempty" protobuf:"bytes,8,opt,name=timestamp"`
 
-	// The containerSecurityContext that was used during the specific check run
-	ContainerSecurityContext ContainerSecurityContextDefaults `json:"containerSecurityContext,omitempty"`
+	// Time the recording ended at
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Format=date-time
+	EndTime metav1.Time `json:"endTime,omitempty" protobuf:"bytes,8,opt,name=timestamp"`
+
+	// The securityContext configurations applied for this job
+	SecurityContextConfigurations *SecurityContextDefaults `json:"securityContextConfigurations,omitempty"`
 
 	// The recorded cpu and memory usage during this check run
 	RecordedMetrics []ResourceUsageRecord `json:"recordedMetrics,omitempty"`
@@ -147,12 +154,14 @@ type WorkloadRecording struct {
 }
 
 type ResourceUsageRecord struct {
-	// Time where this recording was created in ISO-8601
+	// Time when this recording was taken. Used to sort the recordings
+	// +kubebuilder:validation:Type=string
+	// +kubebuilder:validation:Format=date-time
 	Time metav1.Time `json:"timestamp,omitempty" protobuf:"bytes,8,opt,name=timestamp"`
 	// CPU usage in nanocpu
-	CPU *int64 `json:"cpu,omitempty"`
+	CPU int64 `json:"cpu,omitempty"`
 	// Memory usage in bytes
-	Memory *int64 `json:"memory,omitempty"`
+	Memory int64 `json:"memory,omitempty"`
 }
 
 // +kubebuilder:object:root=true
