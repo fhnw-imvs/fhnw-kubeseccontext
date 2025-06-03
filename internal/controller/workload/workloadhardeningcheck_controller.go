@@ -236,7 +236,9 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	wg.Add(len(pods.Items))
 	duration, _ := time.ParseDuration(workloadHardening.Spec.BaselineDuration)
 
-	// Pass results using a channel
+	metricsChannel := make(chan *runner.RecordedMetrics, len(pods.Items))
+	logsChannel := make(chan string, len(pods.Items))
+
 	for _, pod := range pods.Items {
 		go func() {
 			recordedMetrics, err := runner.RecordMetrics(ctx, &pod, int(duration.Seconds()), 15)
@@ -249,6 +251,21 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 					"values", recordedMetrics.Usage,
 				)
 			}
+
+			logs, err := runner.GetLogs(ctx, &pod)
+			if err != nil {
+				log.Error(
+					err,
+					"error fetching logs",
+					"pod.name", pod.Name,
+				)
+			} else {
+				log.V(1).Info("fetched logs")
+			}
+
+			metricsChannel <- recordedMetrics
+			logsChannel <- logs
+
 			wg.Done()
 
 		}()
@@ -256,7 +273,29 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 
 	wg.Wait()
 
+	// close channels so that the range loops will stop
+	close(metricsChannel)
+	close(logsChannel)
+
 	endTime := time.Now()
+
+	resourceUsageRecords := []checksv1alpha1.ResourceUsageRecord{}
+	for result := range metricsChannel {
+		for _, usage := range result.Usage {
+			resourceUsageRecords = append(resourceUsageRecords, checksv1alpha1.ResourceUsageRecord{
+				Time:   metav1.NewTime(usage.Time),
+				CPU:    int64(usage.CPU),
+				Memory: int64(usage.Memory),
+			})
+		}
+	}
+	log.V(2).Info("collected metrics")
+
+	logs := []string{}
+	for podLogs := range logsChannel {
+		logs = append(logs, strings.Split(podLogs, "\n")...)
+	}
+	log.V(2).Info("collected logs")
 
 	// ToDo: Why?!? setCondition already updates it, and it acting on a pointer, shouldn't this also update the ref we have in here?
 	if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
@@ -275,10 +314,12 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	)
 
 	workloadHardening.Status.BaselineRecording = &checksv1alpha1.WorkloadRecording{
-		Type:      "Baseline",
-		Success:   true,
-		StartTime: metav1.NewTime(startTime),
-		EndTime:   metav1.NewTime(endTime),
+		Type:            "Baseline",
+		Success:         true,
+		StartTime:       metav1.NewTime(startTime),
+		EndTime:         metav1.NewTime(endTime),
+		RecordedMetrics: resourceUsageRecords,
+		Logs:            logs,
 	}
 
 	if err := r.Status().Update(ctx, workloadHardening); err != nil {

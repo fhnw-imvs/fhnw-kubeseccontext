@@ -1,9 +1,11 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync"
@@ -169,6 +171,40 @@ type RecordedMetrics struct {
 	Usage    map[time.Time]ResourceUsageRecord `json:"usage"`
 }
 
+// Fetches the logs of the default container
+// To support multiple containers, this needs to be adjusted, and also init-container should be handled
+func GetLogs(ctx context.Context, pod *corev1.Pod) (string, error) {
+	podLogOpts := corev1.PodLogOptions{
+		// Always choose the first pod
+		Container: pod.Spec.Containers[0].Name,
+	}
+
+	clientset, _ := kubernetes.NewForConfig(config.GetConfigOrDie())
+
+	// Set timeout for stream context, otherwise the stream won't close even if we no longer receive
+	ctx, cancelTimeout := context.WithTimeout(ctx, time.Duration(5)*time.Second)
+	defer cancelTimeout()
+
+	req := clientset.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &podLogOpts)
+	podLogs, err := req.Stream(ctx)
+	if err != nil {
+		return "", fmt.Errorf("error opening log stream")
+	}
+	defer podLogs.Close()
+
+	buf := new(bytes.Buffer)
+
+	_, err = io.Copy(buf, podLogs)
+	if err != nil {
+		return "", fmt.Errorf("couldn't copy logs from buffer")
+	}
+	str := buf.String()
+
+	return str, nil
+}
+
+// Records cpu and memory usage metrics for a pod
+// The metrics are collected at pod level, and not at container level
 func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int) (*RecordedMetrics, error) {
 	log := log.FromContext(ctx).WithName("runner")
 
