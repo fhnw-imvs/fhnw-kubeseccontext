@@ -1,0 +1,12 @@
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+  name: nginx
+  namespace: operator-dev
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-deployment

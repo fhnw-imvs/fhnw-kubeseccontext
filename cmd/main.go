@@ -37,6 +37,7 @@ import (
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/controller/workload"
+	webhookchecksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -144,6 +145,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	setupLog.Info("registering components")
+
 	if err = (&workload.WorkloadHardeningCheckReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -152,8 +155,12 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "WorkloadHardeningCheck")
 		os.Exit(1)
 	}
+
+	setupLog.Info("manager successfully configured")
+
+	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err = (&checksv1alpha1.WorkloadHardeningCheck{}).SetupWebhookWithManager(mgr); err != nil {
+		if err = webhookchecksv1alpha1.SetupWorkloadHardeningCheckWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "WorkloadHardeningCheck")
 			os.Exit(1)
 		}

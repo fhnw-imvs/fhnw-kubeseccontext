@@ -169,7 +169,7 @@ func generateTargetNamespaceName(
 	if len(base) > 200 {
 		base = base[:200]
 	}
-	return fmt.Sprintf("%s-%s-%s", base, workloadHardening.Status.Suffix, checkName)
+	return fmt.Sprintf("%s-%s-%s", base, workloadHardening.Spec.Suffix, checkName)
 }
 
 func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string) error {

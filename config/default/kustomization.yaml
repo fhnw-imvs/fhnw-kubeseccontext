@@ -60,14 +60,14 @@ replacements:
      name: serving-cert # this name should match the one in certificate.yaml
      fieldPath: .metadata.namespace # namespace of the certificate CR
    targets:
-     - select:
-         kind: ValidatingWebhookConfiguration
-       fieldPaths:
-         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-       options:
-         delimiter: '/'
-         index: 0
-         create: true
+    #  - select:
+    #      kind: ValidatingWebhookConfiguration
+    #    fieldPaths:
+    #      - .metadata.annotations.[cert-manager.io/inject-ca-from]
+    #    options:
+    #      delimiter: '/'
+    #      index: 0
+    #      create: true
      - select:
          kind: MutatingWebhookConfiguration
        fieldPaths:
@@ -91,14 +91,14 @@ replacements:
      name: serving-cert # this name should match the one in certificate.yaml
      fieldPath: .metadata.name
    targets:
-     - select:
-         kind: ValidatingWebhookConfiguration
-       fieldPaths:
-         - .metadata.annotations.[cert-manager.io/inject-ca-from]
-       options:
-         delimiter: '/'
-         index: 1
-         create: true
+    #  - select:
+    #      kind: ValidatingWebhookConfiguration
+    #    fieldPaths:
+    #      - .metadata.annotations.[cert-manager.io/inject-ca-from]
+    #    options:
+    #      delimiter: '/'
+    #      index: 1
+    #      create: true
      - select:
          kind: MutatingWebhookConfiguration
        fieldPaths:

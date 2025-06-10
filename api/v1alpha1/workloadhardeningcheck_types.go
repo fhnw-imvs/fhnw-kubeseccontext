@@ -41,6 +41,9 @@ type WorkloadHardeningCheckSpec struct {
 
 	// SecurityContext allows the user to define default values for Pod and Container SecurityContext fields.
 	SecurityContext *SecurityContextDefaults `json:"securityContext,omitempty"`
+
+	// Suffix used for all namespaces created during testing
+	Suffix string `json:"suffix,omitempty"`
 }
 
 // TargetReference defines a reference to a Kubernetes workload.
@@ -98,11 +101,6 @@ type SeccompProfile struct {
 
 // WorkloadHardeningCheckStatus defines the observed state of WorkloadHardeningCheck
 type WorkloadHardeningCheckStatus struct {
-
-	// Suffix used for all namespaces created during testing
-	// Could/Should probably be set from a webhook
-	Suffix string `json:"suffix,omitempty"`
-
 	BaselineRecording *WorkloadRecording `json:"baselineRecording,omitempty"`
 
 	CheckRecordings []*WorkloadRecording `json:"checkRecordings,omitempty"`
