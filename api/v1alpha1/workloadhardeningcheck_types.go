@@ -42,7 +42,9 @@ type WorkloadHardeningCheckSpec struct {
 	// SecurityContext allows the user to define default values for Pod and Container SecurityContext fields.
 	SecurityContext *SecurityContextDefaults `json:"securityContext,omitempty"`
 
-	// Suffix used for all namespaces created during testing
+	// Suffix used for all namespaces created during testing. If not specified, a random suffix will be generated.
+	// +kubebuilder:validation:Pattern=`^[a-z0-9-]{0,15}$`
+	// +kubebuilder:default=""
 	Suffix string `json:"suffix,omitempty"`
 }
 

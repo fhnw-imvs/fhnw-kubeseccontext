@@ -139,7 +139,10 @@ spec:
                     type: object
                 type: object
               suffix:
-                description: Suffix used for all namespaces created during testing
+                default: ""
+                description: Suffix used for all namespaces created during testing.
+                  If not specified, a random suffix will be generated.
+                pattern: ^[a-z0-9-]{0,15}$
                 type: string
               targetRef:
                 description: TargetRef specifies the workload to be hardened.

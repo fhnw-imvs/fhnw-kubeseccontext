@@ -147,6 +147,9 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	log.Info("recorded baseline signals", "baselineNamespace", baselineNamespaceName)
 
+	// Cleanup: delete the baseline namespace after recording
+	r.deleteNamespace(ctx, baselineNamespaceName)
+
 	// Create hardening job for baseline recording
 
 	return ctrl.Result{}, nil
@@ -157,6 +160,27 @@ func (r *WorkloadHardeningCheckReconciler) namespaceExists(ctx context.Context, 
 	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
 
 	return !apierrors.IsNotFound(err)
+}
+
+func (r *WorkloadHardeningCheckReconciler) deleteNamespace(ctx context.Context, namespaceName string) error {
+	log := log.FromContext(ctx)
+	targetNs := &corev1.Namespace{}
+	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Info("Namespace already deleted", "namespace", namespaceName)
+			return nil
+		}
+		log.Error(err, "Failed to get Namespace for deletion", "namespace", namespaceName)
+		return err
+	}
+	log.Info("Deleting Namespace", "namespace", namespaceName)
+	err = r.Delete(ctx, targetNs)
+	if err != nil {
+		log.Error(err, "Failed to delete Namespace", "namespace", namespaceName)
+		return err
+	}
+	return nil
 }
 
 func generateTargetNamespaceName(
@@ -363,6 +387,25 @@ func (r *WorkloadHardeningCheckReconciler) createBaselineNamespace(ctx context.C
 		log.Error(err, fmt.Sprintf("failed to clone namespace %s", workloadHardening.Namespace))
 		return "", err
 	}
+
+	targetNs := &corev1.Namespace{}
+	err = r.Get(ctx, client.ObjectKey{Name: targetNamespace}, targetNs)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			log.Error(err, "target namespace not found after cloning")
+			return "", fmt.Errorf("target namespace %s not found after cloning", targetNamespace)
+		}
+		// Error reading the object - requeue the request.
+		log.Error(err, "failed to get target namespace after cloning, requeuing")
+		return "", fmt.Errorf("failed to get target namespace %s after cloning: %w", targetNamespace, err)
+	}
+
+	// Set the owner reference of the cloned namespace to the workload hardening check
+	ctrl.SetControllerReference(
+		workloadHardening,
+		targetNs,
+		r.Scheme,
+	)
 
 	return targetNamespace, r.setCondition(ctx, workloadHardening, metav1.Condition{
 		Type:    typeWorkloadCheckStartup,
