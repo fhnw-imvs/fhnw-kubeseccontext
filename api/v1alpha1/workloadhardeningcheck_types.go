@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -83,6 +84,27 @@ type PodSecurityContextDefaults struct {
 	SeccompProfile *SeccompProfile `json:"seccompProfile,omitempty"`
 }
 
+func (p *PodSecurityContextDefaults) ToK8sSecurityContext() *corev1.PodSecurityContext {
+	if p == nil {
+		return nil
+	}
+
+	sc := &corev1.PodSecurityContext{
+		FSGroup:            p.FSGroup,
+		RunAsUser:          p.RunAsUser,
+		RunAsGroup:         p.RunAsGroup,
+		SupplementalGroups: p.SupplementalGroups,
+	}
+
+	if p.SeccompProfile != nil {
+		sc.SeccompProfile = &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileType(p.SeccompProfile.Type),
+		}
+	}
+
+	return sc
+}
+
 // ContainerSecurityContextDefaults specifies the fields for the Container-level security context.
 type ContainerSecurityContextDefaults struct {
 	RunAsNonRoot             *bool           `json:"runAsNonRoot,omitempty"`
@@ -92,6 +114,40 @@ type ContainerSecurityContextDefaults struct {
 	SeccompProfile           *SeccompProfile `json:"seccompProfile,omitempty"`
 	RunAsUser                *int64          `json:"runAsUser,omitempty"`
 	RunAsGroup               *int64          `json:"runAsGroup,omitempty"`
+}
+
+func (c *ContainerSecurityContextDefaults) ToK8sSecurityContext() *corev1.SecurityContext {
+	if c == nil {
+		return nil
+	}
+
+	sc := &corev1.SecurityContext{
+		RunAsNonRoot:             c.RunAsNonRoot,
+		ReadOnlyRootFilesystem:   c.ReadOnlyRootFilesystem,
+		AllowPrivilegeEscalation: c.AllowPrivilegeEscalation,
+		RunAsUser:                c.RunAsUser,
+		RunAsGroup:               c.RunAsGroup,
+	}
+
+	if len(c.CapabilitiesDrop) > 0 {
+		// Convert string slice to corev1.Capabilities
+		dropCapabilities := make([]corev1.Capability, len(c.CapabilitiesDrop))
+		for i, cap := range c.CapabilitiesDrop {
+			dropCapabilities[i] = corev1.Capability(cap)
+		}
+
+		sc.Capabilities = &corev1.Capabilities{
+			Drop: dropCapabilities,
+		}
+	}
+
+	if c.SeccompProfile != nil {
+		sc.SeccompProfile = &corev1.SeccompProfile{
+			Type: corev1.SeccompProfileType(c.SeccompProfile.Type),
+		}
+	}
+
+	return sc
 }
 
 // SeccompProfile specifies the seccomp profile type.

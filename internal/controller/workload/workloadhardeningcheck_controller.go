@@ -128,6 +128,10 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		// Lower is better for development, but can cause high load in production
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
+	log.Info("targetRef ready for testing",
+		"targetRef", fmt.Sprintf("%s/%s", workloadHardening.Spec.TargetRef.Kind, workloadHardening.Spec.TargetRef.Name),
+		"namespace", workloadHardening.Namespace,
+	)
 
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
 	duration, _ := time.ParseDuration(workloadHardening.Spec.BaselineDuration)
@@ -139,47 +143,201 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		// Set the condition to indicate that we are starting the baseline recording
 
 		// Refactor to be reusable for other checks, than the baseline
-		go r.recordBaseline(ctx, workloadHardening)
+		go r.runCheck(ctx, workloadHardening, "baseline", workloadHardening.Spec.SecurityContext)
 
 		// Requeue the reconciliation after the baseline duration, to continue with the next steps
 		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
+	} else {
+		log.Info("Baseline recorded. Start recording different security context configurations")
 	}
 
 	// Refactor into a go routine, and check for status updates
 	return ctrl.Result{}, nil
 }
 
-func (r *WorkloadHardeningCheckReconciler) recordBaseline(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) {
+func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, checkType string, securityContext *checksv1alpha1.SecurityContextDefaults) {
 	log := log.FromContext(ctx)
 
-	log.Info("targetRef ready. Starting baseline recording")
+	targetNamespaceName := generateTargetNamespaceName(*workloadHardening, checkType)
 
-	baselineNamespaceName := generateTargetNamespaceName(*workloadHardening, "baseline")
-
-	if !r.namespaceExists(ctx, baselineNamespaceName) {
-		// clone into baseline namespace
-		// Add check if we already created the baseline...
-		err := r.createCheckNamespace(ctx, workloadHardening, baselineNamespaceName, workloadHardening.Spec.SecurityContext)
+	// Should we just return if the target namespace already exists?
+	if !r.namespaceExists(ctx, targetNamespaceName) {
+		// clone into target namespace
+		err := r.createCheckNamespace(ctx, workloadHardening, targetNamespaceName, workloadHardening.Spec.SecurityContext)
 		if err != nil {
-			if strings.Contains(err.Error(), "target namespace already exists") {
-				return
-			}
+			log.Error(err, "failed to create target namespace for baseline recording",
+				"targetNamespace", targetNamespaceName,
+				"checkType", checkType,
+			)
 			return
 		}
 
-		log.Info("created baseline namespace", "baselineNamespace", baselineNamespaceName)
+		log.Info("created namespace",
+			"targetNamespace", targetNamespaceName,
+			"checkType", checkType,
+		)
+
+		//ToDo: Apply security context to target workload
+		workload, err := r.getWorkloadUnderTest(ctx, workloadHardening)
+		if err != nil {
+			log.Error(err, "failed to get workload under test",
+				"targetNamespace", targetNamespaceName,
+				"checkType", checkType,
+			)
+			return
+		}
+		log.Info("applying security context to workload under test",
+			"targetNamespace", targetNamespaceName,
+			"checkType", checkType,
+			"workloadName", workloadHardening.Spec.TargetRef.Name,
+		)
+
+		if securityContext != nil && securityContext.Pod != nil {
+			// convert workloadUnderTest to the correct type
+			switch v := (*workload).(type) {
+			case *appsv1.Deployment:
+				v.Spec.Template.Spec.SecurityContext = securityContext.Pod.ToK8sSecurityContext()
+			case *appsv1.StatefulSet:
+				v.Spec.Template.Spec.SecurityContext = securityContext.Pod.ToK8sSecurityContext()
+			case *appsv1.DaemonSet:
+				v.Spec.Template.Spec.SecurityContext = securityContext.Pod.ToK8sSecurityContext()
+			}
+
+			err = r.Update(ctx, *workload)
+			if err != nil {
+				log.Error(err, "failed to update workload under test with security context",
+					"targetNamespace", targetNamespaceName,
+					"checkType", checkType,
+					"workloadName", workloadHardening.Spec.TargetRef.Name,
+				)
+				return
+			}
+			log.Info("applied security context to workload under test",
+				"targetNamespace", targetNamespaceName,
+				"checkType", checkType,
+				"workloadName", workloadHardening.Spec.TargetRef.Name,
+			)
+		}
+
+		if securityContext != nil && securityContext.Container != nil {
+			// convert workloadUnderTest to the correct type
+			switch v := (*workload).(type) {
+			case *appsv1.Deployment:
+				for i := range v.Spec.Template.Spec.Containers {
+					v.Spec.Template.Spec.Containers[i].SecurityContext = securityContext.Container.ToK8sSecurityContext()
+				}
+			case *appsv1.StatefulSet:
+				for i := range v.Spec.Template.Spec.Containers {
+					v.Spec.Template.Spec.Containers[i].SecurityContext = securityContext.Container.ToK8sSecurityContext()
+				}
+			case *appsv1.DaemonSet:
+				for i := range v.Spec.Template.Spec.Containers {
+					v.Spec.Template.Spec.Containers[i].SecurityContext = securityContext.Container.ToK8sSecurityContext()
+				}
+			}
+
+			err = r.Update(ctx, *workload)
+			if err != nil {
+				log.Error(err, "failed to update workload under test with container security context",
+					"targetNamespace", targetNamespaceName,
+					"checkType", checkType,
+					"workloadName", workloadHardening.Spec.TargetRef.Name,
+				)
+				return
+			}
+			log.Info("applied container security context to workload under test",
+				"targetNamespace", targetNamespaceName,
+				"checkType", checkType,
+				"workloadName", workloadHardening.Spec.TargetRef.Name,
+			)
+		}
+
 	}
 
-	// start recording metrics for target workload
-	err := r.recordSignals(ctx, workloadHardening, baselineNamespaceName, "Baseline")
+	var err error
+	if checkType == "baseline" {
+		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    typeWorkloadCheckBaseline,
+			Status:  metav1.ConditionFalse,
+			Reason:  reasonBaselineRecording,
+			Message: "Recording baseline signals",
+		})
+
+	} else {
+		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:   typeWorkloadCheckRunning,
+			Status: metav1.ConditionTrue,
+			Reason: "RecordingSignals",
+		})
+	}
+
 	if err != nil {
+		log.Error(err, "failed to set condition for check",
+			"targetNamespace", targetNamespaceName,
+			"checkType", checkType,
+		)
 		return
 	}
 
-	log.Info("recorded baseline signals", "baselineNamespace", baselineNamespaceName)
+	// start recording metrics for target workload
+	err = r.recordSignals(ctx, workloadHardening, targetNamespaceName, checkType, securityContext)
+	if err != nil {
+		log.Error(err, "failed to record signals",
+			"targetNamespace", targetNamespaceName,
+			"checkType", checkType,
+		)
+		return
+	}
+
+	log.Info("recorded signals",
+		"targetNamespace", targetNamespaceName,
+		"checkType", checkType,
+	)
+
+	if checkType == "baseline" {
+		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    typeWorkloadCheckBaseline,
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonBaselineRecorded,
+			Message: "Baseline signals recorded successfully",
+		})
+
+		r.Recorder.Event(
+			workloadHardening,
+			corev1.EventTypeNormal,
+			reasonBaselineRecorded,
+			fmt.Sprintf(
+				"Recorded baseline signals for workload %s/%s in target namespace %s",
+				workloadHardening.Spec.TargetRef.Kind,
+				workloadHardening.Spec.TargetRef.Name,
+				targetNamespaceName,
+			),
+		)
+	} else {
+		log.Info("recorded signals for workload under test",
+			"targetNamespace", targetNamespaceName,
+			"recordingType", checkType,
+			"workloadName", workloadHardening.Spec.TargetRef.Name,
+		)
+	}
+
+	if err != nil {
+		log.Error(err, "failed to set condition for check",
+			"targetNamespace", targetNamespaceName,
+			"checkType", checkType,
+		)
+		return
+	}
 
 	// Cleanup: delete the baseline namespace after recording
-	r.deleteNamespace(ctx, baselineNamespaceName)
+	err = r.deleteNamespace(ctx, targetNamespaceName)
+	if err != nil {
+		log.Error(err, "failed to delete target namespace after recording",
+			"targetNamespace", targetNamespaceName,
+			"checkType", checkType,
+		)
+		return
+	}
 }
 
 func (r *WorkloadHardeningCheckReconciler) namespaceExists(ctx context.Context, namespaceName string) bool {
@@ -223,30 +381,8 @@ func generateTargetNamespaceName(
 	return fmt.Sprintf("%s-%s-%s", base, workloadHardening.Spec.Suffix, checkName)
 }
 
-func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace, recordingType string) error {
+func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace, recordingType string, securityContext *checksv1alpha1.SecurityContextDefaults) error {
 	log := log.FromContext(ctx)
-
-	if recordingType == "Baseline" {
-		err := r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:    typeWorkloadCheckBaseline,
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonBaselineRecording,
-			Message: "Recording baseline signals",
-		})
-
-		if err != nil {
-			return err
-		}
-	} else {
-		err := r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:   typeWorkloadCheckRunning,
-			Status: metav1.ConditionTrue,
-			Reason: "RecordingSignals",
-		})
-		if err != nil {
-			return err
-		}
-	}
 
 	labelSelector, err := r.getLabelSelector(ctx, workloadHardening)
 	if err != nil {
@@ -334,20 +470,13 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	}
 	log.V(2).Info("collected logs")
 
-	var usedSecurityContext *checksv1alpha1.SecurityContextDefaults
-	if recordingType == "Baseline" {
-		usedSecurityContext = workloadHardening.Spec.SecurityContext
-	} else {
-		// Fetch it from the workload under test
-	}
-
 	workloadRecording := checksv1alpha1.WorkloadRecording{
 		Type:      recordingType,
 		Success:   true,
 		StartTime: metav1.Now(),
 		EndTime:   metav1.Now(),
 		// This should be fetched from the workloadUnderTest to document how to workload was restricted
-		SecurityContextConfigurations: usedSecurityContext,
+		SecurityContextConfigurations: securityContext,
 		RecordedMetrics:               resourceUsageRecords,
 		Logs:                          logs,
 	}
@@ -361,36 +490,6 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	if err != nil {
 		log.Error(err, "failed to store workload recording in Valkey")
 		return fmt.Errorf("failed to store workload recording in Valkey: %w", err)
-	}
-
-	if recordingType == "Baseline" {
-		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:    typeWorkloadCheckBaseline,
-			Status:  metav1.ConditionTrue,
-			Reason:  reasonBaselineRecorded,
-			Message: "Baseline signals recorded successfully",
-		})
-		if err != nil {
-			return err
-		}
-
-		r.Recorder.Event(
-			workloadHardening,
-			corev1.EventTypeNormal,
-			reasonBaselineRecorded,
-			fmt.Sprintf(
-				"Recorded baseline signals for workload %s/%s in target namespace %s",
-				workloadHardening.Spec.TargetRef.Kind,
-				workloadHardening.Spec.TargetRef.Name,
-				targetNamespace,
-			),
-		)
-	} else {
-		log.Info("recorded signals for workload under test",
-			"targetNamespace", targetNamespace,
-			"recordingType", recordingType,
-			"workloadName", workloadHardening.Spec.TargetRef.Name,
-		)
 	}
 
 	return nil
@@ -419,24 +518,7 @@ func (r *WorkloadHardeningCheckReconciler) getLabelSelector(ctx context.Context,
 func (r *WorkloadHardeningCheckReconciler) createCheckNamespace(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string, securityContextToApply *checksv1alpha1.SecurityContextDefaults) error {
 	log := log.FromContext(ctx)
 
-	err := r.setCondition(ctx, workloadHardening, metav1.Condition{
-		Type:    typeWorkloadCheckStartup,
-		Status:  metav1.ConditionTrue,
-		Reason:  "CloningNamespace",
-		Message: "Cloning into baseline namespace",
-	})
-	if err != nil {
-		return err
-	}
-
-	r.Recorder.Event(
-		workloadHardening,
-		corev1.EventTypeNormal,
-		"BaselineCreate",
-		fmt.Sprintf("Cloning source namespace %s into baseline namespace %s", workloadHardening.Namespace, targetNamespace),
-	)
-
-	err = runner.CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace)
+	err := runner.CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace)
 
 	if err != nil {
 		log.Error(err, fmt.Sprintf("failed to clone namespace %s", workloadHardening.Namespace))
@@ -456,18 +538,17 @@ func (r *WorkloadHardeningCheckReconciler) createCheckNamespace(ctx context.Cont
 	}
 
 	// Set the owner reference of the cloned namespace to the workload hardening check
-	ctrl.SetControllerReference(
+	err = ctrl.SetControllerReference(
 		workloadHardening,
 		targetNs,
 		r.Scheme,
 	)
 
-	return r.setCondition(ctx, workloadHardening, metav1.Condition{
-		Type:    typeWorkloadCheckBaseline,
-		Status:  metav1.ConditionFalse,
-		Reason:  "BaselineNamespaceCloned",
-		Message: "Cloned baseline namespace",
-	})
+	if err != nil {
+		log.Error(err, "failed to set controller reference for target namespace")
+	}
+
+	return nil
 
 }
 
