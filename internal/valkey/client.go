@@ -3,6 +3,7 @@ package valkey
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
@@ -31,7 +32,7 @@ func NewValKeyClient(valkeyHost, valkeyPort string) (*ValkeyClient, error) {
 func (v *ValkeyClient) storeEntry(ctx context.Context, key string, value string) error {
 
 	// Store the entry with a key and value, setting an expiration time of 3600 seconds (1 hour)
-	err := v.Do(ctx, v.B().Set().Key(key).Value(value).Ex(3600*time.Second).Build()).Error()
+	err := v.Do(ctx, v.B().Set().Key(strings.ToLower(key)).Value(value).Ex(3600*time.Second).Build()).Error()
 	if err != nil {
 		return err
 	}
@@ -41,7 +42,7 @@ func (v *ValkeyClient) storeEntry(ctx context.Context, key string, value string)
 
 func (v *ValkeyClient) getEntry(ctx context.Context, key string) (string, error) {
 
-	res, err := v.Do(ctx, v.B().Get().Key(key).Build()).AsStrSlice()
+	res, err := v.Do(ctx, v.B().Get().Key(strings.ToLower(key)).Build()).AsStrSlice()
 	if err != nil {
 		return "", err
 	}
@@ -54,7 +55,7 @@ func (v *ValkeyClient) getEntry(ctx context.Context, key string) (string, error)
 
 func (v ValkeyClient) deleteEntry(ctx context.Context, key string) error {
 
-	err := v.Do(ctx, v.B().Del().Key(key).Build()).Error()
+	err := v.Do(ctx, v.B().Del().Key(strings.ToLower(key)).Build()).Error()
 	if err != nil {
 		return err
 	}
