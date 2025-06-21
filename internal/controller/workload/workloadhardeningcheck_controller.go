@@ -23,6 +23,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -32,6 +34,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -51,14 +54,16 @@ const (
 	// Represents a running baseline recording
 	typeWorkloadCheckBaseline = "Baseline"
 	// Represents ongoing check jobs, this state will be used until all checks are finished
-	typeWorkloadCheckRunning = "Running"
-	// Represents a finished check. Now the Status should contain the report
-	typeWorkloadCheckFinished = "Finished"
+	typeWorkloadCheck = "Check"
 
 	// Baseline is currently being recorded
 	reasonBaselineRecording = "BaselineRecording"
 	// Baseline has been recorded successfully
 	reasonBaselineRecorded = "BaselineRecorded"
+
+	// Single check
+	reasonCheckRecording = "CheckRecording"
+	reasonCheckRecorded  = "CheckRecorded"
 )
 
 // WorkloadHardeningCheckReconciler reconciles a WorkloadHardeningCheck object
@@ -68,6 +73,9 @@ type WorkloadHardeningCheckReconciler struct {
 	Recorder     record.EventRecorder
 	ValKeyClient *valkey.ValkeyClient
 }
+
+// Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
+var titleCase = cases.Title(language.English)
 
 // +kubebuilder:rbac:groups=checks.funk.fhnw.ch,resources=workloadhardeningchecks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=checks.funk.fhnw.ch,resources=workloadhardeningchecks/status,verbs=get;update;patch
@@ -115,30 +123,34 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		}
 	}
 
-	// Could be moved to validation webhook
-	ready, err := r.verifyWorkloadTargetRef(ctx, workloadHardening)
-	if err != nil {
-		log.Info("failed to verify workload")
-		return ctrl.Result{}, err
-	}
+	// ToDo: Move to validation webhook
+	{
+		ready, err := r.verifyWorkloadTargetRef(ctx, workloadHardening)
+		if err != nil {
+			log.Info("failed to verify workload")
+			return ctrl.Result{}, err
+		}
 
-	if !ready {
-		log.Info("targetRef not in ready state. Rescheduling...")
-		// Should the requeue interval be configurable?
-		// Lower is better for development, but can cause high load in production
-		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		if !ready {
+			log.Info("targetRef not in ready state. Rescheduling...")
+			// Should the requeue interval be configurable?
+			// Lower is better for development, but can cause high load in production
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+		}
+		log.Info("targetRef ready for testing",
+			"targetRef", fmt.Sprintf("%s/%s", workloadHardening.Spec.TargetRef.Kind, workloadHardening.Spec.TargetRef.Name),
+			"namespace", workloadHardening.Namespace,
+		)
 	}
-	log.Info("targetRef ready for testing",
-		"targetRef", fmt.Sprintf("%s/%s", workloadHardening.Spec.TargetRef.Kind, workloadHardening.Spec.TargetRef.Name),
-		"namespace", workloadHardening.Namespace,
-	)
 
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
 	duration, _ := time.ParseDuration(workloadHardening.Spec.BaselineDuration)
 
 	// Based on the Status, we need to decide what to do next
 	// If there is no Baseline recorded yet, we need to start the baseline recording
-	if !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, typeWorkloadCheckBaseline) {
+	if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, typeWorkloadCheckBaseline) {
+		log.Info("Baseline recorded. Start recording different security context configurations")
+	} else {
 		log.Info("Baseline not recorded yet. Starting baseline recording")
 		// Set the condition to indicate that we are starting the baseline recording
 
@@ -147,12 +159,179 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 		// Requeue the reconciliation after the baseline duration, to continue with the next steps
 		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
-	} else {
-		log.Info("Baseline recorded. Start recording different security context configurations")
 	}
+
+	// If we are here, it means that the baseline recording is done
+	// We can now start recording the workload under test with different security context configurations
+
+	// ToDo: Define the neccessary checks to run, eg. user(runAsUser, runAsNonRoot), group(runAsGroup, fsGroup), roFs(readOnlyFilesystem), seccomp, etc.
+	// Does it make sense to first run a check with a fully hardened security context and only if that fails, run the more granular checks?
+	podChecks := []string{"group", "user"}
+
+	if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
+		log.Info("Running checks in parallel mode")
+		// Run all checks in parallel
+		for _, checkType := range podChecks {
+
+			if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, titleCase.String(checkType)+typeWorkloadCheck) {
+				log.Info(fmt.Sprintf("Check %s already recorded, skipping", checkType))
+				continue // Skip if the check is already recorded
+			}
+
+			securityContext := workloadHardening.Spec.SecurityContext.DeepCopy()
+			if securityContext == nil {
+				securityContext = &checksv1alpha1.SecurityContextDefaults{
+					Pod:       &checksv1alpha1.PodSecurityContextDefaults{},
+					Container: &checksv1alpha1.ContainerSecurityContextDefaults{},
+				}
+			}
+
+			if checkType == "user" {
+				if securityContext.Pod.RunAsUser == nil {
+					securityContext.Pod.RunAsUser = ptr.To(int64(10000))
+				}
+				if securityContext.Pod.RunAsNonRoot == nil {
+					securityContext.Pod.RunAsNonRoot = ptr.To(true)
+				}
+
+				if securityContext.Container.RunAsUser == nil {
+					securityContext.Container.RunAsUser = ptr.To(int64(10000))
+				}
+				if securityContext.Container.RunAsNonRoot == nil {
+					securityContext.Container.RunAsNonRoot = ptr.To(true)
+				}
+			}
+
+			if checkType == "group" {
+				if securityContext.Pod.RunAsGroup == nil {
+					securityContext.Pod.RunAsGroup = ptr.To(int64(10000))
+				}
+				if securityContext.Pod.FSGroup == nil {
+					securityContext.Pod.FSGroup = ptr.To(int64(10000))
+				}
+
+				if securityContext.Container.RunAsGroup == nil {
+					securityContext.Container.RunAsGroup = ptr.To(int64(10000))
+				}
+			}
+			// If the user is set, we need to set the runAsUser field in the security context
+			go r.runCheck(ctx, workloadHardening, checkType, securityContext)
+		}
+
+		// Requeue the reconciliation after the baseline duration, to continue with the next steps
+		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
+	} else {
+		log.Info("Running checks in sequential mode")
+		// ToDo: How to determnine the order of checks? Which ones are already done?
+	}
+
+	// If all checks are done, we can now analyze the recorded signals
+	// ToDo: Implement log comparison between checks and baseline
+	// ToDo: Use metrics if feasible to support the findings from the logs
+	// ToDo: Write the results to the status of the WorkloadHardeningCheck
 
 	// Refactor into a go routine, and check for status updates
 	return ctrl.Result{}, nil
+}
+
+func (r *WorkloadHardeningCheckReconciler) mergePodSecurityContexts(ctx context.Context, base, extends *corev1.PodSecurityContext) *corev1.PodSecurityContext {
+	log := log.FromContext(ctx)
+
+	if base == nil {
+		log.Info("Base security context is nil, using override")
+		return extends
+	}
+
+	if extends == nil {
+		log.Info("Override security context is nil, using base")
+		return base
+	}
+
+	merged := base.DeepCopy()
+	if merged.RunAsUser == nil && extends.RunAsUser != nil {
+		log.V(3).Info("Merging RunAsUser from override into base")
+		merged.RunAsUser = extends.RunAsUser
+	}
+	if merged.RunAsGroup == nil && extends.RunAsGroup != nil {
+		log.V(3).Info("Merging RunAsGroup from override into base")
+		merged.RunAsGroup = extends.RunAsGroup
+	}
+	if merged.FSGroup == nil && extends.FSGroup != nil {
+		log.V(3).Info("Merging FSGroup from override into base")
+		merged.FSGroup = extends.FSGroup
+	}
+	if merged.RunAsNonRoot == nil && extends.RunAsNonRoot != nil {
+		log.V(3).Info("Merging RunAsNonRoot from override into base")
+		merged.RunAsNonRoot = extends.RunAsNonRoot
+	}
+	if merged.SeccompProfile == nil && extends.SeccompProfile != nil {
+		log.V(3).Info("Merging SeccompProfile from override into base")
+		merged.SeccompProfile = extends.SeccompProfile
+	}
+	if merged.SELinuxOptions == nil && extends.SELinuxOptions != nil {
+		log.V(3).Info("Merging SELinuxOptions from override into base")
+		merged.SELinuxOptions = extends.SELinuxOptions
+	}
+	if merged.SupplementalGroups == nil && extends.SupplementalGroups != nil {
+		log.V(3).Info("Merging SupplementalGroups from override into base")
+		merged.SupplementalGroups = extends.SupplementalGroups
+	}
+	if merged.SupplementalGroupsPolicy == nil && extends.SupplementalGroupsPolicy != nil {
+		log.V(3).Info("Merging SupplementalGroupsPolicy from override into base")
+		merged.SupplementalGroupsPolicy = extends.SupplementalGroupsPolicy
+	}
+
+	return merged
+}
+
+func (r *WorkloadHardeningCheckReconciler) mergeContainerSecurityContexts(ctx context.Context, base, extends *corev1.SecurityContext) *corev1.SecurityContext {
+	log := log.FromContext(ctx)
+
+	if base == nil {
+		log.Info("Base security context is nil, using override")
+		return extends
+	}
+
+	if extends == nil {
+		log.Info("Override security context is nil, using base")
+		return base
+	}
+
+	merged := base.DeepCopy()
+	if merged.RunAsUser == nil && extends.RunAsUser != nil {
+		log.V(3).Info("Merging RunAsUser from override into base")
+		merged.RunAsUser = extends.RunAsUser
+	}
+	if merged.RunAsGroup == nil && extends.RunAsGroup != nil {
+		log.V(3).Info("Merging RunAsGroup from override into base")
+		merged.RunAsGroup = extends.RunAsGroup
+	}
+	if merged.Capabilities == nil && extends.Capabilities != nil {
+		log.V(3).Info("Merging Capabilities from override into base")
+		merged.Capabilities = extends.Capabilities
+	}
+	if merged.Privileged == nil && extends.Privileged != nil {
+		log.V(3).Info("Merging Privileged from override into base")
+		merged.Privileged = extends.Privileged
+	}
+	if merged.AllowPrivilegeEscalation == nil && extends.AllowPrivilegeEscalation != nil {
+		log.V(3).Info("Merging AllowPrivilegeEscalation from override into base")
+		merged.AllowPrivilegeEscalation = extends.AllowPrivilegeEscalation
+	}
+	if merged.ReadOnlyRootFilesystem == nil && extends.ReadOnlyRootFilesystem != nil {
+		log.V(3).Info("Merging ReadOnlyRootFilesystem from override into base")
+		merged.ReadOnlyRootFilesystem = extends.ReadOnlyRootFilesystem
+	}
+	if merged.SeccompProfile == nil && extends.SeccompProfile != nil {
+		log.V(3).Info("Merging SeccompProfile from override into base")
+		merged.SeccompProfile = extends.SeccompProfile
+	}
+	if merged.SELinuxOptions == nil && extends.SELinuxOptions != nil {
+		log.V(3).Info("Merging SELinuxOptions from override into base")
+		merged.SELinuxOptions = extends.SELinuxOptions
+	}
+
+	return merged
 }
 
 func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, checkType string, securityContext *checksv1alpha1.SecurityContextDefaults) {
@@ -160,10 +339,50 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 
 	targetNamespaceName := generateTargetNamespaceName(*workloadHardening, checkType)
 
-	// Should we just return if the target namespace already exists?
-	if !r.namespaceExists(ctx, targetNamespaceName) {
+	if r.namespaceExists(ctx, targetNamespaceName) {
+		if meta.IsStatusConditionFalse(
+			workloadHardening.Status.Conditions,
+			titleCase.String(checkType)+typeWorkloadCheck,
+		) {
+			log.V(1).Info("Target namespace already exists, and check still in running state",
+				"targetNamespace", targetNamespaceName,
+			)
+			return
+		} else if meta.IsStatusConditionTrue(
+			workloadHardening.Status.Conditions,
+			titleCase.String(checkType)+typeWorkloadCheck,
+		) {
+			log.V(1).Info("Target namespace already exists, and check has finished successfully. Removing namespace",
+				"targetNamespace", targetNamespaceName,
+			)
+			// Cleanup: delete the baseline namespace after recording
+			err := r.deleteNamespace(ctx, targetNamespaceName)
+			if err != nil {
+				log.Error(err, "failed to delete target namespace after recording",
+					"targetNamespace", targetNamespaceName,
+					"checkType", checkType,
+				)
+			} else {
+				log.Info("deleted target namespace after recording",
+					"targetNamespace", targetNamespaceName,
+					"checkType", checkType,
+				)
+			}
+			return
+		} else if meta.IsStatusConditionPresentAndEqual(
+			workloadHardening.Status.Conditions,
+			titleCase.String(checkType)+typeWorkloadCheck,
+			metav1.ConditionUnknown,
+		) {
+			log.V(1).Info("Target namespace already exists, and check is in unknown state. Most likely a previous run failed",
+				"targetNamespace", targetNamespaceName,
+			)
+		}
+
+	} else {
+
 		// clone into target namespace
-		err := r.createCheckNamespace(ctx, workloadHardening, targetNamespaceName, workloadHardening.Spec.SecurityContext)
+		err := r.createCheckNamespace(ctx, workloadHardening, targetNamespaceName)
 		if err != nil {
 			log.Error(err, "failed to create target namespace for baseline recording",
 				"targetNamespace", targetNamespaceName,
@@ -177,84 +396,96 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 			"checkType", checkType,
 		)
 
-		//ToDo: Apply security context to target workload
-		workload, err := r.getWorkloadUnderTest(ctx, workloadHardening)
-		if err != nil {
-			log.Error(err, "failed to get workload under test",
-				"targetNamespace", targetNamespaceName,
-				"checkType", checkType,
-			)
-			return
-		}
-		log.Info("applying security context to workload under test",
+		time.Sleep(1 * time.Second) // Give the namespace some time to be fully created and ready
+	}
+
+	// Fetch the workload we want to test, make sure we fetch it from the target namespace
+	workload, err := r.getWorkloadUnderTest(ctx, targetNamespaceName, workloadHardening.Spec.TargetRef.Name, workloadHardening.Spec.TargetRef.Kind)
+	if err != nil {
+		log.Error(err, "failed to get workload under test",
 			"targetNamespace", targetNamespaceName,
 			"checkType", checkType,
 			"workloadName", workloadHardening.Spec.TargetRef.Name,
 		)
+		return
+	}
 
-		if securityContext != nil && securityContext.Pod != nil {
-			// convert workloadUnderTest to the correct type
-			switch v := (*workload).(type) {
-			case *appsv1.Deployment:
-				v.Spec.Template.Spec.SecurityContext = securityContext.Pod.ToK8sSecurityContext()
-			case *appsv1.StatefulSet:
-				v.Spec.Template.Spec.SecurityContext = securityContext.Pod.ToK8sSecurityContext()
-			case *appsv1.DaemonSet:
-				v.Spec.Template.Spec.SecurityContext = securityContext.Pod.ToK8sSecurityContext()
-			}
+	log.Info("applying security context to workload under test",
+		"targetNamespace", targetNamespaceName,
+		"checkType", checkType,
+		"workloadName", workloadHardening.Spec.TargetRef.Name,
+	)
 
-			err = r.Update(ctx, *workload)
-			if err != nil {
-				log.Error(err, "failed to update workload under test with security context",
-					"targetNamespace", targetNamespaceName,
-					"checkType", checkType,
-					"workloadName", workloadHardening.Spec.TargetRef.Name,
-				)
-				return
-			}
-			log.Info("applied security context to workload under test",
-				"targetNamespace", targetNamespaceName,
-				"checkType", checkType,
-				"workloadName", workloadHardening.Spec.TargetRef.Name,
-			)
-		}
-
-		if securityContext != nil && securityContext.Container != nil {
-			// convert workloadUnderTest to the correct type
-			switch v := (*workload).(type) {
-			case *appsv1.Deployment:
-				for i := range v.Spec.Template.Spec.Containers {
-					v.Spec.Template.Spec.Containers[i].SecurityContext = securityContext.Container.ToK8sSecurityContext()
-				}
-			case *appsv1.StatefulSet:
-				for i := range v.Spec.Template.Spec.Containers {
-					v.Spec.Template.Spec.Containers[i].SecurityContext = securityContext.Container.ToK8sSecurityContext()
-				}
-			case *appsv1.DaemonSet:
-				for i := range v.Spec.Template.Spec.Containers {
-					v.Spec.Template.Spec.Containers[i].SecurityContext = securityContext.Container.ToK8sSecurityContext()
-				}
-			}
-
-			err = r.Update(ctx, *workload)
-			if err != nil {
-				log.Error(err, "failed to update workload under test with container security context",
-					"targetNamespace", targetNamespaceName,
-					"checkType", checkType,
-					"workloadName", workloadHardening.Spec.TargetRef.Name,
-				)
-				return
-			}
-			log.Info("applied container security context to workload under test",
-				"targetNamespace", targetNamespaceName,
-				"checkType", checkType,
-				"workloadName", workloadHardening.Spec.TargetRef.Name,
-			)
+	if securityContext != nil && securityContext.Pod != nil {
+		// convert workloadUnderTest to the correct type
+		switch v := (*workload).(type) {
+		case *appsv1.Deployment:
+			currentSecurityContext := v.Spec.Template.Spec.SecurityContext.DeepCopy()
+			v.Spec.Template.Spec.SecurityContext = r.mergePodSecurityContexts(ctx, currentSecurityContext, securityContext.Pod.ToK8sSecurityContext())
+		case *appsv1.StatefulSet:
+			currentSecurityContext := v.Spec.Template.Spec.SecurityContext.DeepCopy()
+			v.Spec.Template.Spec.SecurityContext = r.mergePodSecurityContexts(ctx, currentSecurityContext, securityContext.Pod.ToK8sSecurityContext())
+		case *appsv1.DaemonSet:
+			currentSecurityContext := v.Spec.Template.Spec.SecurityContext.DeepCopy()
+			v.Spec.Template.Spec.SecurityContext = r.mergePodSecurityContexts(ctx, currentSecurityContext, securityContext.Pod.ToK8sSecurityContext())
 		}
 
 	}
 
-	var err error
+	if securityContext != nil && securityContext.Container != nil {
+		// convert workloadUnderTest to the correct type
+		switch v := (*workload).(type) {
+		case *appsv1.Deployment:
+			for i := range v.Spec.Template.Spec.Containers {
+				currentSecurityContext := v.Spec.Template.Spec.Containers[i].SecurityContext.DeepCopy()
+				v.Spec.Template.Spec.Containers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
+			}
+		case *appsv1.StatefulSet:
+			for i := range v.Spec.Template.Spec.Containers {
+				currentSecurityContext := v.Spec.Template.Spec.Containers[i].SecurityContext.DeepCopy()
+				v.Spec.Template.Spec.Containers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
+			}
+		case *appsv1.DaemonSet:
+			for i := range v.Spec.Template.Spec.Containers {
+				currentSecurityContext := v.Spec.Template.Spec.Containers[i].SecurityContext.DeepCopy()
+				v.Spec.Template.Spec.Containers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
+			}
+		}
+	}
+
+	err = r.Update(ctx, *workload)
+	if err != nil {
+		log.Error(err, "failed to update workload under test with security context",
+			"targetNamespace", targetNamespaceName,
+			"checkType", checkType,
+			"workloadName", workloadHardening.Spec.TargetRef.Name,
+		)
+		if checkType == "baseline" {
+			r.setCondition(ctx, workloadHardening, metav1.Condition{
+				Type:    typeWorkloadCheckBaseline,
+				Status:  metav1.ConditionUnknown,
+				Reason:  reasonBaselineRecording,
+				Message: "Failed to apply security context to workload",
+			})
+
+		} else {
+			r.setCondition(ctx, workloadHardening, metav1.Condition{
+				Type:    titleCase.String(checkType) + typeWorkloadCheck,
+				Status:  metav1.ConditionUnknown,
+				Reason:  titleCase.String(checkType) + reasonCheckRecording,
+				Message: "Failed to apply security context to workload",
+			})
+		}
+		return
+	}
+	log.Info("applied security context to workload under test",
+		"targetNamespace", targetNamespaceName,
+		"checkType", checkType,
+		"workloadName", workloadHardening.Spec.TargetRef.Name,
+	)
+
+	// ToDo: Wait for pods to be ready with the updated security context
+
 	if checkType == "baseline" {
 		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
 			Type:    typeWorkloadCheckBaseline,
@@ -265,9 +496,10 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 
 	} else {
 		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:   typeWorkloadCheckRunning,
-			Status: metav1.ConditionTrue,
-			Reason: "RecordingSignals",
+			Type:    titleCase.String(checkType) + typeWorkloadCheck,
+			Status:  metav1.ConditionFalse,
+			Reason:  titleCase.String(checkType) + reasonCheckRecording,
+			Message: "Recording signals",
 		})
 	}
 
@@ -286,6 +518,22 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 			"targetNamespace", targetNamespaceName,
 			"checkType", checkType,
 		)
+		if checkType == "baseline" {
+			r.setCondition(ctx, workloadHardening, metav1.Condition{
+				Type:    typeWorkloadCheckBaseline,
+				Status:  metav1.ConditionUnknown,
+				Reason:  reasonBaselineRecording,
+				Message: "Failed to record baseline signals",
+			})
+
+		} else {
+			r.setCondition(ctx, workloadHardening, metav1.Condition{
+				Type:    titleCase.String(checkType) + typeWorkloadCheck,
+				Status:  metav1.ConditionUnknown,
+				Reason:  titleCase.String(checkType) + reasonCheckRecording,
+				Message: "Failed to record signals",
+			})
+		}
 		return
 	}
 
@@ -314,10 +562,23 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 			),
 		)
 	} else {
-		log.Info("recorded signals for workload under test",
-			"targetNamespace", targetNamespaceName,
-			"recordingType", checkType,
-			"workloadName", workloadHardening.Spec.TargetRef.Name,
+		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    titleCase.String(checkType) + typeWorkloadCheck,
+			Status:  metav1.ConditionTrue,
+			Reason:  titleCase.String(checkType) + reasonCheckRecorded,
+			Message: "signals recorded successfully",
+		})
+
+		r.Recorder.Event(
+			workloadHardening,
+			corev1.EventTypeNormal,
+			titleCase.String(checkType)+reasonCheckRecorded,
+			fmt.Sprintf(
+				"Recorded signals for workload %s/%s in target namespace %s",
+				workloadHardening.Spec.TargetRef.Kind,
+				workloadHardening.Spec.TargetRef.Name,
+				targetNamespaceName,
+			),
 		)
 	}
 
@@ -326,7 +587,6 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 			"targetNamespace", targetNamespaceName,
 			"checkType", checkType,
 		)
-		return
 	}
 
 	// Cleanup: delete the baseline namespace after recording
@@ -336,7 +596,11 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 			"targetNamespace", targetNamespaceName,
 			"checkType", checkType,
 		)
-		return
+	} else {
+		log.Info("deleted target namespace after recording",
+			"targetNamespace", targetNamespaceName,
+			"checkType", checkType,
+		)
 	}
 }
 
@@ -391,10 +655,35 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 
 	// get pods under observation. They need to be managed by the targetRef workload
 	pods := &corev1.PodList{}
-	err = r.List(ctx, pods, &client.ListOptions{Namespace: targetNamespace, LabelSelector: labelSelector})
-	if err != nil {
-		log.Error(err, "error fetching pods")
-		return err
+	for len(pods.Items) == 0 {
+		err = r.List(
+			ctx,
+			pods,
+			&client.ListOptions{
+				Namespace:     targetNamespace,
+				LabelSelector: labelSelector,
+			},
+		)
+		if err != nil {
+			log.Error(err, "error fetching pods")
+			return err
+		}
+
+		// If the pods aren't assigned to a node, we cannot record metrics
+		if len(pods.Items) > 0 {
+			allAssigned := true
+			for _, pod := range pods.Items {
+				if pod.Spec.NodeName == "" {
+					allAssigned = false
+					break
+				}
+			}
+			if allAssigned {
+				break // All pods are assigned to a node, we can proceed
+			}
+			pods = &corev1.PodList{} // reset podList to retry fetching
+			log.Info("Pods are not assigned to a node yet, retrying")
+		}
 	}
 
 	log.Info(
@@ -496,7 +785,7 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 }
 
 func (r *WorkloadHardeningCheckReconciler) getLabelSelector(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) (labels.Selector, error) {
-	workloadUnderTest, err := r.getWorkloadUnderTest(ctx, workloadHardening)
+	workloadUnderTest, err := r.getWorkloadUnderTest(ctx, workloadHardening.Namespace, workloadHardening.Spec.TargetRef.Name, workloadHardening.Spec.TargetRef.Kind)
 	if err != nil {
 		return nil, err
 	}
@@ -515,7 +804,7 @@ func (r *WorkloadHardeningCheckReconciler) getLabelSelector(ctx context.Context,
 	return metav1.LabelSelectorAsSelector(labelSelector)
 }
 
-func (r *WorkloadHardeningCheckReconciler) createCheckNamespace(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string, securityContextToApply *checksv1alpha1.SecurityContextDefaults) error {
+func (r *WorkloadHardeningCheckReconciler) createCheckNamespace(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string) error {
 	log := log.FromContext(ctx)
 
 	err := runner.CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace)
@@ -553,13 +842,13 @@ func (r *WorkloadHardeningCheckReconciler) createCheckNamespace(ctx context.Cont
 }
 
 func (r *WorkloadHardeningCheckReconciler) getWorkloadUnderTest(ctx context.Context,
-	workloadHardening *checksv1alpha1.WorkloadHardeningCheck,
+	namespace, name, kind string,
 ) (*client.Object, error) {
 	log := log.FromContext(ctx)
 
 	// Verify namespace contains target workload
 	var workloadUnderTest client.Object
-	switch kind := strings.ToLower(workloadHardening.Spec.TargetRef.Kind); kind {
+	switch strings.ToLower(kind) {
 	case "deployment":
 		workloadUnderTest = &appsv1.Deployment{}
 	case "statefulset":
@@ -571,8 +860,8 @@ func (r *WorkloadHardeningCheckReconciler) getWorkloadUnderTest(ctx context.Cont
 	err := r.Get(
 		ctx,
 		types.NamespacedName{
-			Namespace: workloadHardening.Namespace,
-			Name:      workloadHardening.Spec.TargetRef.Name,
+			Namespace: namespace,
+			Name:      name,
 		},
 		workloadUnderTest,
 	)
@@ -600,7 +889,7 @@ func (r *WorkloadHardeningCheckReconciler) verifyWorkloadTargetRef(
 ) (bool, error) {
 	//log := log.FromContext(ctx)
 
-	workloadUnderTest, err := r.getWorkloadUnderTest(ctx, workloadHardening)
+	workloadUnderTest, err := r.getWorkloadUnderTest(ctx, workloadHardening.Namespace, workloadHardening.Spec.TargetRef.Name, workloadHardening.Spec.TargetRef.Kind)
 	if err != nil {
 		return false, err
 	}
@@ -633,12 +922,6 @@ func (r *WorkloadHardeningCheckReconciler) setCondition(ctx context.Context, wor
 
 	if err := r.Status().Update(ctx, workloadHardening); err != nil {
 		log.Error(err, "Failed to update WorkloadHardeningCheck status")
-		return err
-	}
-
-	// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
-	if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
-		log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 		return err
 	}
 

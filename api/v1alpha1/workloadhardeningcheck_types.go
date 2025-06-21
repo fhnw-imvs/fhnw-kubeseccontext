@@ -24,6 +24,11 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
+const (
+	RunModeParallel   = "parallel"
+	RunModeSequential = "sequential"
+)
+
 // WorkloadHardeningCheckSpec defines the desired state of WorkloadHardeningCheck
 type WorkloadHardeningCheckSpec struct {
 	// TargetRef specifies the workload to be hardened.
@@ -78,6 +83,7 @@ type PodSecurityContextDefaults struct {
 	FSGroup            *int64  `json:"fsGroup,omitempty"`
 	RunAsUser          *int64  `json:"runAsUser,omitempty"`
 	RunAsGroup         *int64  `json:"runAsGroup,omitempty"`
+	RunAsNonRoot       *bool   `json:"runAsNonRoot,omitempty"`
 	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
 
 	// SeccompProfile type (e.g., RuntimeDefault, Localhost, Unconfined).
@@ -93,6 +99,7 @@ func (p *PodSecurityContextDefaults) ToK8sSecurityContext() *corev1.PodSecurityC
 		FSGroup:            p.FSGroup,
 		RunAsUser:          p.RunAsUser,
 		RunAsGroup:         p.RunAsGroup,
+		RunAsNonRoot:       p.RunAsNonRoot,
 		SupplementalGroups: p.SupplementalGroups,
 	}
 

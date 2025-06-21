@@ -32,6 +32,7 @@ func NewValKeyClient(valkeyHost, valkeyPort string) (*ValkeyClient, error) {
 func (v *ValkeyClient) storeEntry(ctx context.Context, key string, value string) error {
 
 	// Store the entry with a key and value, setting an expiration time of 3600 seconds (1 hour)
+	// Make expiry configurable/dynamic depending on the baseline duration
 	err := v.Do(ctx, v.B().Set().Key(strings.ToLower(key)).Value(value).Ex(3600*time.Second).Build()).Error()
 	if err != nil {
 		return err

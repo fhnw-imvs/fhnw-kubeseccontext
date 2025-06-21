@@ -93,6 +93,11 @@ func (in *PodSecurityContextDefaults) DeepCopyInto(out *PodSecurityContextDefaul
 		*out = new(int64)
 		**out = **in
 	}
+	if in.RunAsNonRoot != nil {
+		in, out := &in.RunAsNonRoot, &out.RunAsNonRoot
+		*out = new(bool)
+		**out = **in
+	}
 	if in.SupplementalGroups != nil {
 		in, out := &in.SupplementalGroups, &out.SupplementalGroups
 		*out = make([]int64, len(*in))

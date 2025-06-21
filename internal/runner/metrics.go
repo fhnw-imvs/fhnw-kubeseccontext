@@ -215,6 +215,13 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 	log.Info("Recording resource usage for pod", "podName", pod.Name)
 
 	for {
+		if time.Now().After(end) {
+			log.Info("Recording resource usage finished", "podName", pod.Name)
+			break
+		}
+		if pod.Spec.NodeName == "" {
+			return nil, fmt.Errorf("pod %s has no node assigned", pod.Name)
+		}
 		err := RefreshPodMetricsPerNode(ctx, pod.Spec.NodeName)
 		if err != nil {
 			return nil, err
