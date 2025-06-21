@@ -148,7 +148,7 @@ func getAllResources(ctx context.Context, namespace string) (map[string]*unstruc
 	resources := make(map[string]*unstructured.UnstructuredList)
 	for _, resourceList := range namespacedResources {
 		if len(resourceList.APIResources) == 0 {
-			log.V(2).Info("no resources found for group version", "groupVersion", resourceList.GroupVersion)
+			log.V(3).Info("no resources found for group version", "groupVersion", resourceList.GroupVersion)
 			continue
 		}
 

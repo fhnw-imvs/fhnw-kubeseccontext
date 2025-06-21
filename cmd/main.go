@@ -37,19 +37,23 @@ import (
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/controller/workload"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 	webhookchecksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
 var (
-	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	scheme     = runtime.NewScheme()
+	setupLog   = ctrl.Log.WithName("setup")
+	valkeyHost = "valkey"
+	valkeyPort = "6379"
 )
 
 func init() {
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 
 	utilruntime.Must(checksv1alpha1.AddToScheme(scheme))
+
 	// +kubebuilder:scaffold:scheme
 }
 
@@ -70,6 +74,8 @@ func main() {
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+	flag.StringVar(&valkeyHost, "valkey-host", valkeyHost, "The host of the Valkey server.")
+	flag.StringVar(&valkeyPort, "valkey-port", valkeyPort, "The port of the Valkey server.")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -146,11 +152,17 @@ func main() {
 	}
 
 	setupLog.Info("registering components")
+	valKeyClient, err := valkey.NewValKeyClient(valkeyHost, valkeyPort)
+	if err != nil {
+		setupLog.Error(err, "unable to create Valkey client", "host", valkeyHost, "port", valkeyPort)
+		os.Exit(1)
+	}
 
 	if err = (&workload.WorkloadHardeningCheckReconciler{
-		Client:   mgr.GetClient(),
-		Scheme:   mgr.GetScheme(),
-		Recorder: mgr.GetEventRecorderFor("workload-hardening-controller"),
+		Client:       mgr.GetClient(),
+		Scheme:       mgr.GetScheme(),
+		Recorder:     mgr.GetEventRecorderFor("workload-hardening-controller"),
+		ValKeyClient: valKeyClient,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "WorkloadHardeningCheck")
 		os.Exit(1)

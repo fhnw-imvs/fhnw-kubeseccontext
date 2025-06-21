@@ -103,13 +103,6 @@ type SeccompProfile struct {
 
 // WorkloadHardeningCheckStatus defines the observed state of WorkloadHardeningCheck
 type WorkloadHardeningCheckStatus struct {
-	BaselineRecording *WorkloadRecording `json:"baselineRecording,omitempty"`
-
-	CheckRecordings []*WorkloadRecording `json:"checkRecordings,omitempty"`
-
-	// Recordings of all signals
-	// List of custom structs, the struct must contain a list of signals
-	// (Again a struct, containing resource recordings as well as logs) for each check/job
 
 	// Represents the observations of a WorkloadHardeningCheck's current state.
 	// WorkloadHardeningCheck.status.conditions.type are: "Preparation", "Baseline", "Running", "Finished" and "Failed"

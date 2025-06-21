@@ -194,6 +194,12 @@ deploy: manifests kustomize ## Deploy controller to the K8s cluster specified in
 undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
+.PHONY: deploy-kind
+deploy-kind: ## Build a new image, load it into the kind cluster and restart the pod.
+	$(MAKE) docker-build
+	$(KIND) load docker-image ${IMG}
+	$(KUBECTL) -n orakel-of-funk-system delete pod -l control-plane=controller-manager
+
 ##@ Dependencies
 
 ## Location to install dependencies to
@@ -207,6 +213,7 @@ KUSTOMIZE ?= $(LOCALBIN)/kustomize
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen
 ENVTEST ?= $(LOCALBIN)/setup-envtest
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint
+KIND ?= kind
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.4.3

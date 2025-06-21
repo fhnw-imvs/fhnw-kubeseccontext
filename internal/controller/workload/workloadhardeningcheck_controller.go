@@ -41,6 +41,7 @@ import (
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 )
 
 // Definitions to manage status conditions
@@ -53,13 +54,19 @@ const (
 	typeWorkloadCheckRunning = "Running"
 	// Represents a finished check. Now the Status should contain the report
 	typeWorkloadCheckFinished = "Finished"
+
+	// Baseline is currently being recorded
+	reasonBaselineRecording = "BaselineRecording"
+	// Baseline has been recorded successfully
+	reasonBaselineRecorded = "BaselineRecorded"
 )
 
 // WorkloadHardeningCheckReconciler reconciles a WorkloadHardeningCheck object
 type WorkloadHardeningCheckReconciler struct {
 	client.Client
-	Scheme   *runtime.Scheme
-	Recorder record.EventRecorder
+	Scheme       *runtime.Scheme
+	Recorder     record.EventRecorder
+	ValKeyClient *valkey.ValkeyClient
 }
 
 // +kubebuilder:rbac:groups=checks.funk.fhnw.ch,resources=workloadhardeningchecks,verbs=get;list;watch;create;update;patch;delete
@@ -121,34 +128,38 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
-	log.Info("targetRef ready. Starting baseline recording")
+	// Refactor into a go routine, and check for status updates
+	{
 
-	baselineNamespaceName := generateTargetNamespaceName(*workloadHardening, "baseline")
+		log.Info("targetRef ready. Starting baseline recording")
 
-	if !r.namespaceExists(ctx, baselineNamespaceName) {
-		// clone into baseline namespace
-		// Add check if we already created the baseline...
-		baselineNamespaceName, err = r.createBaselineNamespace(ctx, workloadHardening)
-		if err != nil {
-			if strings.Contains(err.Error(), "target namespace already exists") {
-				return ctrl.Result{}, nil
+		baselineNamespaceName := generateTargetNamespaceName(*workloadHardening, "baseline")
+
+		if !r.namespaceExists(ctx, baselineNamespaceName) {
+			// clone into baseline namespace
+			// Add check if we already created the baseline...
+			baselineNamespaceName, err = r.createBaselineNamespace(ctx, workloadHardening)
+			if err != nil {
+				if strings.Contains(err.Error(), "target namespace already exists") {
+					return ctrl.Result{}, nil
+				}
+				return ctrl.Result{}, err
 			}
+
+			log.Info("created baseline namespace", "baselineNamespace", baselineNamespaceName)
+		}
+
+		// start recording metrics for target workload
+		err = r.recordSignals(ctx, workloadHardening, baselineNamespaceName, "Baseline")
+		if err != nil {
 			return ctrl.Result{}, err
 		}
 
-		log.Info("created baseline namespace", "baselineNamespace", baselineNamespaceName)
+		log.Info("recorded baseline signals", "baselineNamespace", baselineNamespaceName)
+
+		// Cleanup: delete the baseline namespace after recording
+		r.deleteNamespace(ctx, baselineNamespaceName)
 	}
-
-	// start recording metrics for target workload
-	err = r.recordSignals(ctx, workloadHardening, baselineNamespaceName)
-	if err != nil {
-		return ctrl.Result{}, err
-	}
-
-	log.Info("recorded baseline signals", "baselineNamespace", baselineNamespaceName)
-
-	// Cleanup: delete the baseline namespace after recording
-	r.deleteNamespace(ctx, baselineNamespaceName)
 
 	// Create hardening job for baseline recording
 
@@ -196,30 +207,30 @@ func generateTargetNamespaceName(
 	return fmt.Sprintf("%s-%s-%s", base, workloadHardening.Spec.Suffix, checkName)
 }
 
-func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string) error {
+func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace, recordingType string) error {
 	log := log.FromContext(ctx)
 
-	err := r.setCondition(ctx, workloadHardening, metav1.Condition{
-		Type:    typeWorkloadCheckBaseline,
-		Status:  metav1.ConditionTrue,
-		Reason:  "BaselineRecording",
-		Message: "Recording baseline signals",
-	})
-	if err != nil {
-		return err
-	}
+	if recordingType == "Baseline" {
+		err := r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    typeWorkloadCheckBaseline,
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonBaselineRecording,
+			Message: "Recording baseline signals",
+		})
 
-	r.Recorder.Event(
-		workloadHardening,
-		corev1.EventTypeNormal,
-		"BaselineRecording",
-		fmt.Sprintf(
-			"Recording baseline signals in %s for %s/%s",
-			targetNamespace,
-			workloadHardening.Spec.TargetRef.Kind,
-			workloadHardening.Spec.TargetRef.Name,
-		),
-	)
+		if err != nil {
+			return err
+		}
+	} else {
+		err := r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:   typeWorkloadCheckRunning,
+			Status: metav1.ConditionTrue,
+			Reason: "RecordingSignals",
+		})
+		if err != nil {
+			return err
+		}
+	}
 
 	labelSelector, err := r.getLabelSelector(ctx, workloadHardening)
 	if err != nil {
@@ -238,8 +249,6 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 		fmt.Sprintf("fetched pods matching workload under test in target namespace %s", targetNamespace),
 		"numberOfPods", len(pods.Items),
 	)
-
-	startTime := time.Now()
 
 	var wg sync.WaitGroup
 	wg.Add(len(pods.Items))
@@ -286,8 +295,6 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	close(metricsChannel)
 	close(logsChannel)
 
-	endTime := time.Now()
-
 	resourceUsageRecords := []checksv1alpha1.ResourceUsageRecord{}
 	for result := range metricsChannel {
 		for _, usage := range result.Usage {
@@ -299,6 +306,11 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 		}
 	}
 	log.V(2).Info("collected metrics")
+	// marshel to json
+	if len(resourceUsageRecords) == 0 {
+		log.Info("no resource usage records found, nothing to store")
+		return nil
+	}
 
 	logs := []string{}
 	for podLogs := range logsChannel {
@@ -306,34 +318,63 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	}
 	log.V(2).Info("collected logs")
 
-	// ToDo: Why?!? setCondition already updates it, and it acting on a pointer, shouldn't this also update the ref we have in here?
-	if err := r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
-		log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
-		return err
+	var usedSecurityContext *checksv1alpha1.SecurityContextDefaults
+	if recordingType == "Baseline" {
+		usedSecurityContext = workloadHardening.Spec.SecurityContext
+	} else {
+		// Fetch it from the workload under test
 	}
 
-	meta.SetStatusCondition(
-		&workloadHardening.Status.Conditions,
-		metav1.Condition{
-			Type:    typeWorkloadCheckBaseline,
-			Status:  metav1.ConditionTrue,
-			Reason:  "BaselineRecorded",
-			Message: "Basline signals recorded",
-		},
+	workloadRecording := checksv1alpha1.WorkloadRecording{
+		Type:      recordingType,
+		Success:   true,
+		StartTime: metav1.Now(),
+		EndTime:   metav1.Now(),
+		// This should be fetched from the workloadUnderTest to document how to workload was restricted
+		SecurityContextConfigurations: usedSecurityContext,
+		RecordedMetrics:               resourceUsageRecords,
+		Logs:                          logs,
+	}
+
+	err = r.ValKeyClient.StoreRecording(
+		ctx,
+		workloadHardening.Spec.Suffix,
+		workloadRecording,
 	)
 
-	workloadHardening.Status.BaselineRecording = &checksv1alpha1.WorkloadRecording{
-		Type:            "Baseline",
-		Success:         true,
-		StartTime:       metav1.NewTime(startTime),
-		EndTime:         metav1.NewTime(endTime),
-		RecordedMetrics: resourceUsageRecords,
-		Logs:            logs,
+	if err != nil {
+		log.Error(err, "failed to store workload recording in Valkey")
+		return fmt.Errorf("failed to store workload recording in Valkey: %w", err)
 	}
 
-	if err := r.Status().Update(ctx, workloadHardening); err != nil {
-		log.Error(err, "Failed to update WorkloadHardeningCheck status")
-		return err
+	if recordingType == "Baseline" {
+		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    typeWorkloadCheckBaseline,
+			Status:  metav1.ConditionTrue,
+			Reason:  reasonBaselineRecorded,
+			Message: "Baseline signals recorded successfully",
+		})
+		if err != nil {
+			return err
+		}
+
+		r.Recorder.Event(
+			workloadHardening,
+			corev1.EventTypeNormal,
+			reasonBaselineRecorded,
+			fmt.Sprintf(
+				"Recorded baseline signals for workload %s/%s in target namespace %s",
+				workloadHardening.Spec.TargetRef.Kind,
+				workloadHardening.Spec.TargetRef.Name,
+				targetNamespace,
+			),
+		)
+	} else {
+		log.Info("recorded signals for workload under test",
+			"targetNamespace", targetNamespace,
+			"recordingType", recordingType,
+			"workloadName", workloadHardening.Spec.TargetRef.Name,
+		)
 	}
 
 	return nil
