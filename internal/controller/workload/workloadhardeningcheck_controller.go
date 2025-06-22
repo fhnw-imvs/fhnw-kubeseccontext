@@ -102,7 +102,40 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// If the custom resource is not found then it usually means that it was deleted or not created
-			log.Info("WorkloadHardeningCheck not found. Ignoring since object must be deleted")
+			log.Info("WorkloadHardeningCheck deleted, cleaning up resources")
+
+			checkNamespaces := corev1.NamespaceList{}
+			err = r.List(
+				ctx,
+				&checkNamespaces,
+				&client.ListOptions{
+					LabelSelector: labels.SelectorFromSet(map[string]string{
+						"orakel.fhnw.ch/source-namespace": workloadHardening.GetNamespace(),
+						"orakel.fhnw.ch/suffix":           workloadHardening.Spec.Suffix,
+					}),
+				},
+			)
+			if err != nil {
+				log.Error(err, "Failed to list namespaces for cleanup")
+				return ctrl.Result{}, err
+			}
+			if len(checkNamespaces.Items) == 0 {
+				log.Info("No namespaces found for cleanup")
+				return ctrl.Result{}, nil
+			}
+
+			log.Info("Found namespaces for cleanup", "count", len(checkNamespaces.Items))
+
+			for _, ns := range checkNamespaces.Items {
+				log.Info("Deleting namespace", "namespace", ns.Name)
+				err = r.deleteNamespace(ctx, ns.Name)
+				if err != nil {
+					log.Error(err, "Failed to delete namespace", "namespace", ns.Name)
+				} else {
+					log.Info("Deleted namespace", "namespace", ns.Name)
+				}
+			}
+
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue the request.
@@ -424,15 +457,27 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 				currentSecurityContext := v.Spec.Template.Spec.Containers[i].SecurityContext.DeepCopy()
 				v.Spec.Template.Spec.Containers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
 			}
+			for i := range v.Spec.Template.Spec.InitContainers {
+				currentSecurityContext := v.Spec.Template.Spec.InitContainers[i].SecurityContext.DeepCopy()
+				v.Spec.Template.Spec.InitContainers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
+			}
 		case *appsv1.StatefulSet:
 			for i := range v.Spec.Template.Spec.Containers {
 				currentSecurityContext := v.Spec.Template.Spec.Containers[i].SecurityContext.DeepCopy()
 				v.Spec.Template.Spec.Containers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
 			}
+			for i := range v.Spec.Template.Spec.InitContainers {
+				currentSecurityContext := v.Spec.Template.Spec.InitContainers[i].SecurityContext.DeepCopy()
+				v.Spec.Template.Spec.InitContainers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
+			}
 		case *appsv1.DaemonSet:
 			for i := range v.Spec.Template.Spec.Containers {
 				currentSecurityContext := v.Spec.Template.Spec.Containers[i].SecurityContext.DeepCopy()
 				v.Spec.Template.Spec.Containers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
+			}
+			for i := range v.Spec.Template.Spec.InitContainers {
+				currentSecurityContext := v.Spec.Template.Spec.InitContainers[i].SecurityContext.DeepCopy()
+				v.Spec.Template.Spec.InitContainers[i].SecurityContext = r.mergeContainerSecurityContexts(ctx, currentSecurityContext, securityContext.Container.ToK8sSecurityContext())
 			}
 		}
 	}
@@ -782,7 +827,8 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 
 	err = r.ValKeyClient.StoreRecording(
 		ctx,
-		workloadHardening.Spec.Suffix,
+		// prefix with original namespace to avoid conflict if suffix is reused
+		workloadHardening.GetNamespace()+":"+workloadHardening.Spec.Suffix,
 		workloadRecording,
 	)
 
@@ -817,7 +863,7 @@ func (r *WorkloadHardeningCheckReconciler) getLabelSelector(ctx context.Context,
 func (r *WorkloadHardeningCheckReconciler) createCheckNamespace(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string) error {
 	log := log.FromContext(ctx)
 
-	err := runner.CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace)
+	err := runner.CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace, workloadHardening.Spec.Suffix)
 
 	if err != nil {
 		log.Error(err, fmt.Sprintf("failed to clone namespace %s", workloadHardening.Namespace))

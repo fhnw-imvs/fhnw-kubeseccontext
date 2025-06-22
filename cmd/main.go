@@ -25,6 +25,7 @@ import (
 	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
+	uberZap "go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -77,7 +78,8 @@ func main() {
 	flag.StringVar(&valkeyHost, "valkey-host", valkeyHost, "The host of the Valkey server.")
 	flag.StringVar(&valkeyPort, "valkey-port", valkeyPort, "The port of the Valkey server.")
 	opts := zap.Options{
-		Development: true,
+		Development: false,
+		Level:       uberZap.DebugLevel,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()

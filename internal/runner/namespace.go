@@ -10,6 +10,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/dynamic"
@@ -31,7 +32,7 @@ var resourcesToSkip = []string{
 	"workloadhardeningchecks",
 }
 
-func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string) error {
+func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffix string) error {
 	log := log.FromContext(ctx).WithName("runner")
 
 	// check if targetNamespace already exists
@@ -59,11 +60,12 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 	// create targetNamespace
 	targetNs.Name = targetNamespace
 	targetNs.Labels = map[string]string{
-		"app.kubernetes.io/name":       targetNamespace,
-		"app.kubernetes.io/managed-by": "oracle-of-funk",
+		"app.kubernetes.io/name":          targetNamespace,
+		"app.kubernetes.io/managed-by":    "oracle-of-funk",
+		"orakel.fhnw.ch/source-namespace": sourceNamespace,
+		"orakel.fhnw.ch/suffix":           suffix,
 	}
 
-	// ToDo: Set controllerReference for Namespace
 	err = cl.Create(ctx, targetNs)
 	if err != nil {
 		return fmt.Errorf("error creating target namespace: %w", err)
@@ -87,6 +89,29 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 		clonedResource.SetUID("")
 		// override namespace!
 		clonedResource.SetNamespace(targetNamespace)
+
+		// ToDo: Clone PVC using the original PV as datasource
+		if clonedResource.GetKind() == "PersistentVolumeClaim" {
+			// remove all annotations, as the storage controller adds its own which will conflict
+			clonedResource.SetAnnotations(map[string]string{})
+			// we need to remove the PersistentVolumeClaim's reference to the PersistentVolume
+			clonedResource.Object["spec"].(map[string]any)["volumeName"] = ""
+		}
+
+		// Remove all ips from services, otherwise they will conflict with the original namespace
+		if clonedResource.GetKind() == "Service" {
+			var svc *corev1.Service
+			// Convert to service object
+			runtime.DefaultUnstructuredConverter.FromUnstructured(clonedResource.Object, &svc)
+
+			svc.Spec.ClusterIP = ""
+			svc.Spec.ClusterIPs = []string{}
+			svc.Spec.ExternalIPs = []string{}
+			svc.Spec.LoadBalancerIP = ""
+
+			// Convert back to unstructured object
+			clonedResource.Object, _ = runtime.DefaultUnstructuredConverter.ToUnstructured(svc)
+		}
 
 		err = cl.Create(ctx, clonedResource)
 		if err != nil {
