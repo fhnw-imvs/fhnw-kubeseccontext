@@ -58,11 +58,13 @@ const (
 
 	// Baseline is currently being recorded
 	reasonBaselineRecording = "BaselineRecording"
+	reasonBaselineFailed    = "BaselineRecordingFailed"
 	// Baseline has been recorded successfully
 	reasonBaselineRecorded = "BaselineRecorded"
 
 	// Single check
 	reasonCheckRecording = "CheckRecording"
+	reasonCheckFailed    = "CheckRecordingFailed"
 	reasonCheckRecorded  = "CheckRecorded"
 )
 
@@ -207,7 +209,12 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		for _, checkType := range podChecks {
 
 			if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, titleCase.String(checkType)+typeWorkloadCheck) {
-				log.Info(fmt.Sprintf("Check %s already recorded, skipping", checkType))
+				log.Info("Check already finished, skipping", "checkType", checkType)
+				continue // Skip if the check is already recorded
+			}
+
+			if meta.IsStatusConditionFalse(workloadHardening.Status.Conditions, titleCase.String(checkType)+typeWorkloadCheck) {
+				log.Info("Check still running, skipping", "checkType", checkType)
 				continue // Skip if the check is already recorded
 			}
 
@@ -368,35 +375,22 @@ func (r *WorkloadHardeningCheckReconciler) mergeContainerSecurityContexts(ctx co
 }
 
 func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, checkType string, securityContext *checksv1alpha1.SecurityContextDefaults) {
+	var conditionType string
+	var conditionReason string
 	log := log.FromContext(ctx).WithValues("checkType", checkType)
+
+	if checkType == "baseline" {
+		conditionType = typeWorkloadCheckBaseline
+	} else {
+		conditionType = titleCase.String(checkType) + typeWorkloadCheck
+	}
 
 	targetNamespaceName := generateTargetNamespaceName(*workloadHardening, checkType)
 
 	log = log.WithValues("targetNamespace", targetNamespaceName)
 
 	if r.namespaceExists(ctx, targetNamespaceName) {
-		if meta.IsStatusConditionFalse(
-			workloadHardening.Status.Conditions,
-			titleCase.String(checkType)+typeWorkloadCheck,
-		) {
-			log.V(1).Info("Target namespace already exists, and check still in running state")
-			return
-		} else if meta.IsStatusConditionTrue(
-			workloadHardening.Status.Conditions,
-			titleCase.String(checkType)+typeWorkloadCheck,
-		) {
-			log.V(1).Info(
-				"Target namespace already exists, and check has finished successfully. Removing namespace",
-			)
-			// Cleanup: delete the baseline namespace after recording
-			err := r.deleteNamespace(ctx, targetNamespaceName)
-			if err != nil {
-				log.Error(err, "failed to delete target namespace after recording")
-			} else {
-				log.Info("deleted target namespace after recording")
-			}
-			return
-		} else if meta.IsStatusConditionPresentAndEqual(
+		if meta.IsStatusConditionPresentAndEqual(
 			workloadHardening.Status.Conditions,
 			titleCase.String(checkType)+typeWorkloadCheck,
 			metav1.ConditionUnknown,
@@ -488,21 +482,18 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 			"workloadName", workloadHardening.Spec.TargetRef.Name,
 		)
 		if checkType == "baseline" {
-			r.setCondition(ctx, workloadHardening, metav1.Condition{
-				Type:    typeWorkloadCheckBaseline,
-				Status:  metav1.ConditionUnknown,
-				Reason:  reasonBaselineRecording,
-				Message: "Failed to apply security context to workload",
-			})
+			conditionReason = reasonBaselineRecording
 
 		} else {
-			r.setCondition(ctx, workloadHardening, metav1.Condition{
-				Type:    titleCase.String(checkType) + typeWorkloadCheck,
-				Status:  metav1.ConditionUnknown,
-				Reason:  titleCase.String(checkType) + reasonCheckRecording,
-				Message: "Failed to apply security context to workload",
-			})
+			conditionReason = titleCase.String(checkType) + reasonCheckRecording
 		}
+
+		r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    conditionType,
+			Status:  metav1.ConditionUnknown,
+			Reason:  conditionReason,
+			Message: "Failed to apply security context to workload",
+		})
 		return
 	}
 	log.Info("applied security context to workload under test",
@@ -515,18 +506,34 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 	for !running {
 		r.Get(ctx, types.NamespacedName{Namespace: targetNamespaceName, Name: workloadHardening.Spec.TargetRef.Name}, *workload)
 		running, _ = verifySuccessfullyRunning(*workload)
-		if time.Now().After(startTime.Add(1 * time.Minute)) {
+
+		if time.Now().After(startTime.Add(2 * time.Minute)) {
 			log.Error(fmt.Errorf("timeout while waiting for workload to be running"), "timeout while waiting for workload to be running",
 				"targetNamespace", targetNamespaceName,
 				"checkType", checkType,
 				"workloadName", workloadHardening.Spec.TargetRef.Name,
 			)
+			if checkType == "baseline" {
+				conditionReason = reasonBaselineFailed
+			} else {
+				conditionReason = titleCase.String(checkType) + reasonCheckFailed
+			}
 			r.setCondition(ctx, workloadHardening, metav1.Condition{
-				Type:    titleCase.String(checkType) + typeWorkloadCheck,
-				Status:  metav1.ConditionFalse,
-				Reason:  titleCase.String(checkType) + reasonCheckRecording,
+				Type:    conditionType,
+				Status:  metav1.ConditionTrue,
+				Reason:  conditionReason,
 				Message: "Timeout while waiting for workload to be running",
 			})
+			r.Recorder.Event(
+				workloadHardening,
+				corev1.EventTypeWarning,
+				conditionReason,
+				fmt.Sprintf(
+					"%sCheck: Timeout while waiting for workloads to be running in namespace %s",
+					checkType,
+					targetNamespaceName,
+				),
+			)
 			return
 		}
 		if !running {
@@ -542,21 +549,17 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 	)
 
 	if checkType == "baseline" {
-		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:    typeWorkloadCheckBaseline,
-			Status:  metav1.ConditionFalse,
-			Reason:  reasonBaselineRecording,
-			Message: "Recording baseline signals",
-		})
-
+		conditionReason = reasonBaselineRecording
 	} else {
-		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:    titleCase.String(checkType) + typeWorkloadCheck,
-			Status:  metav1.ConditionFalse,
-			Reason:  titleCase.String(checkType) + reasonCheckRecording,
-			Message: "Recording signals",
-		})
+		conditionReason = titleCase.String(checkType) + reasonCheckRecording
 	}
+
+	err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+		Type:    conditionType,
+		Status:  metav1.ConditionTrue,
+		Reason:  conditionReason,
+		Message: "Recording signals",
+	})
 
 	if err != nil {
 		log.Error(err, "failed to set condition for check")
@@ -567,66 +570,48 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 	err = r.recordSignals(ctx, workloadHardening, targetNamespaceName, checkType, securityContext)
 	if err != nil {
 		log.Error(err, "failed to record signals")
-		if checkType == "baseline" {
-			r.setCondition(ctx, workloadHardening, metav1.Condition{
-				Type:    typeWorkloadCheckBaseline,
-				Status:  metav1.ConditionUnknown,
-				Reason:  reasonBaselineRecording,
-				Message: "Failed to record baseline signals",
-			})
 
+		if checkType == "baseline" {
+			conditionReason = reasonBaselineFailed
 		} else {
-			r.setCondition(ctx, workloadHardening, metav1.Condition{
-				Type:    titleCase.String(checkType) + typeWorkloadCheck,
-				Status:  metav1.ConditionUnknown,
-				Reason:  titleCase.String(checkType) + reasonCheckRecording,
-				Message: "Failed to record signals",
-			})
+			conditionReason = titleCase.String(checkType) + reasonCheckFailed
 		}
+
+		r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    conditionType,
+			Status:  metav1.ConditionTrue,
+			Reason:  conditionReason,
+			Message: "Failed to record signals",
+		})
+
 		return
 	}
 
 	log.Info("recorded signals")
 
 	if checkType == "baseline" {
-		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:    typeWorkloadCheckBaseline,
-			Status:  metav1.ConditionTrue,
-			Reason:  reasonBaselineRecorded,
-			Message: "Baseline signals recorded successfully",
-		})
-
-		r.Recorder.Event(
-			workloadHardening,
-			corev1.EventTypeNormal,
-			reasonBaselineRecorded,
-			fmt.Sprintf(
-				"Recorded baseline signals for workload %s/%s in target namespace %s",
-				workloadHardening.Spec.TargetRef.Kind,
-				workloadHardening.Spec.TargetRef.Name,
-				targetNamespaceName,
-			),
-		)
+		conditionReason = reasonBaselineRecorded
 	} else {
-		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:    titleCase.String(checkType) + typeWorkloadCheck,
-			Status:  metav1.ConditionTrue,
-			Reason:  titleCase.String(checkType) + reasonCheckRecorded,
-			Message: "signals recorded successfully",
-		})
-
-		r.Recorder.Event(
-			workloadHardening,
-			corev1.EventTypeNormal,
-			titleCase.String(checkType)+reasonCheckRecorded,
-			fmt.Sprintf(
-				"Recorded signals for workload %s/%s in target namespace %s",
-				workloadHardening.Spec.TargetRef.Kind,
-				workloadHardening.Spec.TargetRef.Name,
-				targetNamespaceName,
-			),
-		)
+		conditionReason = titleCase.String(checkType) + reasonCheckRecorded
 	}
+
+	err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+		Type:    conditionType,
+		Status:  metav1.ConditionTrue,
+		Reason:  conditionReason,
+		Message: "Signals recorded successfully",
+	})
+
+	r.Recorder.Event(
+		workloadHardening,
+		corev1.EventTypeNormal,
+		conditionReason,
+		fmt.Sprintf(
+			"Recorded %sCheck signals in namespace %s",
+			checkType,
+			targetNamespaceName,
+		),
+	)
 
 	if err != nil {
 		log.Error(err, "failed to set condition for check")
