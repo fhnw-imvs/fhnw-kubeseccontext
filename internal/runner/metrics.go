@@ -173,10 +173,10 @@ type RecordedMetrics struct {
 
 // Fetches the logs of the default container
 // To support multiple containers, this needs to be adjusted, and also init-container should be handled
-func GetLogs(ctx context.Context, pod *corev1.Pod) (string, error) {
+func GetLogs(ctx context.Context, pod *corev1.Pod, containerName string) (string, error) {
 	podLogOpts := corev1.PodLogOptions{
 		// Always choose the first pod
-		Container: pod.Spec.Containers[0].Name,
+		Container: containerName,
 	}
 
 	clientset, _ := kubernetes.NewForConfig(config.GetConfigOrDie())

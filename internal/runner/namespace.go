@@ -84,6 +84,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace string
 		clonedResource.SetResourceVersion("")
 		clonedResource.SetSelfLink("")
 		clonedResource.SetGeneration(0)
+		clonedResource.SetUID("")
 		// override namespace!
 		clonedResource.SetNamespace(targetNamespace)
 
