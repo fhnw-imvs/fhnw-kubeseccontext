@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -64,7 +64,7 @@ func (v ValkeyClient) deleteEntry(ctx context.Context, key string) error {
 	return nil
 }
 
-func (v ValkeyClient) StoreRecording(ctx context.Context, suffix string, recording checksv1alpha1.WorkloadRecording) error {
+func (v ValkeyClient) StoreRecording(ctx context.Context, suffix string, recording *runner.WorkloadRecording) error {
 	key := "recording:" + suffix + ":" + recording.Type
 
 	// Store the metrics in Valkey
@@ -76,7 +76,7 @@ func (v ValkeyClient) StoreRecording(ctx context.Context, suffix string, recordi
 	return v.storeEntry(ctx, key, string(jsonB))
 }
 
-func (v ValkeyClient) GetRecording(ctx context.Context, keySuffix string) (*checksv1alpha1.WorkloadRecording, error) {
+func (v ValkeyClient) GetRecording(ctx context.Context, keySuffix string) (*runner.WorkloadRecording, error) {
 
 	key := "recording:" + keySuffix
 
@@ -88,7 +88,7 @@ func (v ValkeyClient) GetRecording(ctx context.Context, keySuffix string) (*chec
 		return nil, nil // No recording found for the given key
 	}
 
-	var recording checksv1alpha1.WorkloadRecording
+	var recording runner.WorkloadRecording
 	err = json.Unmarshal([]byte(value), &recording)
 	if err != nil {
 		return nil, err

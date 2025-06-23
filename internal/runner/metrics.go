@@ -156,19 +156,13 @@ func getNodeMetrics(ctx context.Context, nodeName string) (*statsapi.Summary, er
 	return &metrics, nil
 }
 
-type ResourceUsageRecord struct {
-	Time   time.Time `json:"ts"`
-	CPU    uint64    `json:"cpu"`
-	Memory uint64    `json:"memory"`
-}
-
 type RecordedMetrics struct {
-	Pod      string                            `json:"pod"`
-	Start    time.Time                         `json:"start_time"`
-	End      time.Time                         `json:"end_time"`
-	Interval int                               `json:"interval"`
-	Duration int                               `json:"duration"`
-	Usage    map[time.Time]ResourceUsageRecord `json:"usage"`
+	Pod      string                              `json:"pod"`
+	Start    time.Time                           `json:"start_time"`
+	End      time.Time                           `json:"end_time"`
+	Interval int                                 `json:"interval"`
+	Duration int                                 `json:"duration"`
+	Usage    map[metav1.Time]ResourceUsageRecord `json:"usage"`
 }
 
 // Fetches the logs of the default container
@@ -208,7 +202,7 @@ func GetLogs(ctx context.Context, pod *corev1.Pod, containerName string) (string
 func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int) (*RecordedMetrics, error) {
 	log := log.FromContext(ctx).WithName("runner")
 
-	recordedMetrics := map[time.Time]ResourceUsageRecord{}
+	recordedMetrics := map[metav1.Time]ResourceUsageRecord{}
 
 	start := time.Now()
 	end := start.Add(time.Duration(duration) * time.Second)
@@ -240,9 +234,9 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 		}
 
 		metric := ResourceUsageRecord{
-			Time:   time.Now(),
-			CPU:    *podResources.CPU.UsageNanoCores,
-			Memory: *podResources.Memory.WorkingSetBytes,
+			Time:   metav1.Now(),
+			CPU:    int64(*podResources.CPU.UsageNanoCores),
+			Memory: int64(*podResources.Memory.WorkingSetBytes),
 		}
 		recordedMetrics[metric.Time] = metric
 

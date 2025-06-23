@@ -502,7 +502,7 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 
 	// ToDo: detect if pods are able to get into a running state, otherwise we cannot record metrics and it's clear this has failed
 	running := false
-	startTime := time.Now()
+	startTime := metav1.Now()
 	for !running {
 		r.Get(ctx, types.NamespacedName{Namespace: targetNamespaceName, Name: workloadHardening.Spec.TargetRef.Name}, *workload)
 		running, _ = verifySuccessfullyRunning(*workload)
@@ -534,6 +534,27 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 					targetNamespaceName,
 				),
 			)
+			err = r.ValKeyClient.StoreRecording(
+				ctx,
+				// prefix with original namespace to avoid conflict if suffix is reused
+				workloadHardening.GetNamespace()+":"+workloadHardening.Spec.Suffix,
+				&runner.WorkloadRecording{
+					Type:                          checkType,
+					Success:                       false,
+					StartTime:                     startTime,
+					EndTime:                       metav1.Now(),
+					SecurityContextConfigurations: securityContext,
+				},
+			)
+			if err != nil {
+				log.Error(err, "failed to store workload recording in Valkey")
+			}
+
+			err = r.deleteNamespace(ctx, targetNamespaceName)
+			if err != nil {
+				log.Error(err, "failed to delete target namespace with failed workload")
+			}
+
 			return
 		}
 		if !running {
@@ -567,7 +588,7 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 	}
 
 	// start recording metrics for target workload
-	err = r.recordSignals(ctx, workloadHardening, targetNamespaceName, checkType, securityContext)
+	workloadRecording, err := r.recordSignals(ctx, workloadHardening, targetNamespaceName, checkType, securityContext)
 	if err != nil {
 		log.Error(err, "failed to record signals")
 
@@ -585,6 +606,17 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 		})
 
 		return
+	}
+
+	err = r.ValKeyClient.StoreRecording(
+		ctx,
+		// prefix with original namespace to avoid conflict if suffix is reused
+		workloadHardening.GetNamespace()+":"+workloadHardening.Spec.Suffix,
+		workloadRecording,
+	)
+
+	if err != nil {
+		log.Error(err, "failed to store workload recording in Valkey")
 	}
 
 	log.Info("recorded signals")
@@ -617,7 +649,7 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 		log.Error(err, "failed to set condition for check")
 	}
 
-	// Cleanup: delete the baseline namespace after recording
+	// Cleanup: delete the check namespace after recording
 	err = r.deleteNamespace(ctx, targetNamespaceName)
 	if err != nil {
 		log.Error(err, "failed to delete target namespace after recording")
@@ -667,7 +699,7 @@ func generateTargetNamespaceName(
 	return fmt.Sprintf("%s-%s-%s", base, workloadHardening.Spec.Suffix, checkName)
 }
 
-func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace, recordingType string, securityContext *checksv1alpha1.SecurityContextDefaults) error {
+func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace, recordingType string, securityContext *checksv1alpha1.SecurityContextDefaults) (*runner.WorkloadRecording, error) {
 	log := log.FromContext(ctx).WithValues(
 		"targetNamespace", targetNamespace,
 		"recordingType", recordingType,
@@ -676,7 +708,7 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 
 	labelSelector, err := r.getLabelSelector(ctx, workloadHardening)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	time.Sleep(1 * time.Second) // Give the workload some time to be ready with the updated security context
@@ -694,7 +726,7 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 		)
 		if err != nil {
 			log.Error(err, "error fetching pods")
-			return err
+			return nil, err
 		}
 
 		// If the pods aren't assigned to a node, we cannot record metrics
@@ -777,20 +809,15 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	close(metricsChannel)
 	close(logsChannel)
 
-	resourceUsageRecords := []checksv1alpha1.ResourceUsageRecord{}
+	resourceUsageRecords := []runner.ResourceUsageRecord{}
 	for result := range metricsChannel {
 		for _, usage := range result.Usage {
-			resourceUsageRecords = append(resourceUsageRecords, checksv1alpha1.ResourceUsageRecord{
-				Time:   metav1.NewTime(usage.Time),
-				CPU:    int64(usage.CPU),
-				Memory: int64(usage.Memory),
-			})
+			resourceUsageRecords = append(resourceUsageRecords, usage)
 		}
 	}
 	log.V(1).Info("collected metrics")
 	if len(resourceUsageRecords) == 0 {
 		log.Info("no resource usage records found, nothing to store")
-		return nil
 	}
 
 	logs := []string{}
@@ -799,7 +826,7 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 	}
 	log.V(1).Info("collected logs")
 
-	workloadRecording := checksv1alpha1.WorkloadRecording{
+	workloadRecording := runner.WorkloadRecording{
 		Type:      recordingType,
 		Success:   true,
 		StartTime: startTime,
@@ -810,19 +837,7 @@ func (r *WorkloadHardeningCheckReconciler) recordSignals(ctx context.Context, wo
 		Logs:                          logs,
 	}
 
-	err = r.ValKeyClient.StoreRecording(
-		ctx,
-		// prefix with original namespace to avoid conflict if suffix is reused
-		workloadHardening.GetNamespace()+":"+workloadHardening.Spec.Suffix,
-		workloadRecording,
-	)
-
-	if err != nil {
-		log.Error(err, "failed to store workload recording in Valkey")
-		return fmt.Errorf("failed to store workload recording in Valkey: %w", err)
-	}
-
-	return nil
+	return &workloadRecording, nil
 }
 
 func (r *WorkloadHardeningCheckReconciler) getLabelSelector(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck) (labels.Selector, error) {
