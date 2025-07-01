@@ -45,6 +45,7 @@ import (
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
+	wh "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
 )
 
 // Definitions to manage status conditions
@@ -86,11 +87,6 @@ var titleCase = cases.Title(language.English)
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the WorkloadHardeningCheck object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.0/pkg/reconcile
 func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -158,28 +154,8 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		}
 	}
 
-	// ToDo: Move to validation webhook
-	{
-		ready, err := r.verifyWorkloadTargetRef(ctx, workloadHardening)
-		if err != nil {
-			log.Info("failed to verify workload")
-			return ctrl.Result{}, err
-		}
-
-		if !ready {
-			log.Info("targetRef not in ready state. Rescheduling...")
-			// Should the requeue interval be configurable?
-			// Lower is better for development, but can cause high load in production
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
-		}
-		log.Info("targetRef ready for testing",
-			"targetRef", fmt.Sprintf("%s/%s", workloadHardening.Spec.TargetRef.Kind, workloadHardening.Spec.TargetRef.Name),
-			"namespace", workloadHardening.Namespace,
-		)
-	}
-
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
-	duration, _ := time.ParseDuration(workloadHardening.Spec.BaselineDuration)
+	duration := workloadHardening.GetCheckDuration()
 
 	// Based on the Status, we need to decide what to do next
 	// If there is no Baseline recorded yet, we need to start the baseline recording
@@ -506,7 +482,7 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 	startTime := metav1.Now()
 	for !running {
 		r.Get(ctx, types.NamespacedName{Namespace: targetNamespaceName, Name: workloadHardening.Spec.TargetRef.Name}, *workload)
-		running, _ = verifySuccessfullyRunning(*workload)
+		running, _ = wh.VerifySuccessfullyRunning(*workload)
 
 		if time.Now().After(startTime.Add(2 * time.Minute)) {
 			log.Error(fmt.Errorf("timeout while waiting for workload to be running"), "timeout while waiting for workload to be running",
@@ -947,7 +923,6 @@ func (r *WorkloadHardeningCheckReconciler) verifyWorkloadTargetRef(
 	ctx context.Context,
 	workloadHardening *checksv1alpha1.WorkloadHardeningCheck,
 ) (bool, error) {
-	//log := log.FromContext(ctx)
 
 	workloadUnderTest, err := r.getWorkloadUnderTest(ctx, workloadHardening.Namespace, workloadHardening.Spec.TargetRef.Name, workloadHardening.Spec.TargetRef.Kind)
 	if err != nil {

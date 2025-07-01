@@ -1,4 +1,12 @@
 ## Append samples of your project ##
 resources:
-- checks_v1alpha1_workloadhardeningcheck.yaml
+- namespace.yaml
+- hello-node.yaml
+- helm-maria.yaml
+- nginx-failing.yaml
+- workloadcheck-hello-node.yaml
+- workloadcheck-nginx.yaml
+- workloadcheck-mariadb.yaml
 # +kubebuilder:scaffold:manifestskustomizesamples
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
