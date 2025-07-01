@@ -4,7 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: orakel-of-funk
   name: nginx
-  namespace: operator-dev
+  namespace: dev-workload
 spec:
   targetRef:
     apiVersion: apps/v1

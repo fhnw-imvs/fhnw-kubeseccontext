@@ -201,6 +201,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// ToDo: Define the neccessary checks to run, eg. user(runAsUser, runAsNonRoot), group(runAsGroup, fsGroup), roFs(readOnlyFilesystem), seccomp, etc.
 	// Does it make sense to first run a check with a fully hardened security context and only if that fails, run the more granular checks?
+	// ToDo: Refactor & Move into runner package
 	podChecks := []string{"group", "user"}
 
 	if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
@@ -534,6 +535,9 @@ func (r *WorkloadHardeningCheckReconciler) runCheck(ctx context.Context, workloa
 					targetNamespaceName,
 				),
 			)
+
+			//ToDo: Fetch pod events & maybe pod logs, to add context to the failure
+
 			err = r.ValKeyClient.StoreRecording(
 				ctx,
 				// prefix with original namespace to avoid conflict if suffix is reused

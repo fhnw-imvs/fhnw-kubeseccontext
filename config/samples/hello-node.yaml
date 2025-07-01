@@ -4,7 +4,7 @@ metadata:
   labels:
     app: hello-node
   name: hello-node
-  namespace: operator-dev
+  namespace: dev-workload
 spec:
   replicas: 1
   revisionHistoryLimit: 0
@@ -48,17 +48,7 @@ spec:
           successThreshold: 1
           timeoutSeconds: 1
         resources: {}
-        securityContext:
-          allowPrivilegeEscalation: false
-          capabilities:
-            drop:
-            - ALL
-          privileged: false
-          readOnlyRootFilesystem: true
-          runAsGroup: 2000
-          runAsNonRoot: true
-          runAsUser: 1000
-          seLinuxOptions: {}
+        securityContext: {}
         startupProbe:
           failureThreshold: 3
           httpGet:
@@ -127,6 +117,5 @@ spec:
       securityContext:
         fsGroup: 2000
         runAsGroup: 2000
-        runAsNonRoot: true
         runAsUser: 1000
       terminationGracePeriodSeconds: 30

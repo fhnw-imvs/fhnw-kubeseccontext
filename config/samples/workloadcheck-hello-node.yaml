@@ -4,10 +4,11 @@ metadata:
   labels:
     app.kubernetes.io/name: orakel-of-funk
   name: hello-node
-  namespace: operator-dev
+  namespace: dev-workload
 spec:
   targetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: hello-node
   baselineDuration: 1m
+  suffix: blub

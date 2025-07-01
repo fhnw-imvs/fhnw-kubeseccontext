@@ -3,10 +3,12 @@ kind: WorkloadHardeningCheck
 metadata:
   labels:
     app.kubernetes.io/name: orakel-of-funk
-    app.kubernetes.io/managed-by: kustomize
-  name: workloadhardeningcheck-sample
+  name: mariadb
+  namespace: mariadb
 spec:
   targetRef:
     apiVersion: apps/v1
-    kind: Deployment
-    name: hello-node
+    kind: StatefulSet
+    name: mariadb
+  baselineDuration: 1m
+  suffix: orakel
