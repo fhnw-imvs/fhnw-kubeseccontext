@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -156,15 +157,6 @@ func getNodeMetrics(ctx context.Context, nodeName string) (*statsapi.Summary, er
 	return &metrics, nil
 }
 
-type RecordedMetrics struct {
-	Pod      string                              `json:"pod"`
-	Start    time.Time                           `json:"start_time"`
-	End      time.Time                           `json:"end_time"`
-	Interval int                                 `json:"interval"`
-	Duration int                                 `json:"duration"`
-	Usage    map[metav1.Time]ResourceUsageRecord `json:"usage"`
-}
-
 // Fetches the logs of the default container
 // To support multiple containers, this needs to be adjusted, and also init-container should be handled
 func GetLogs(ctx context.Context, pod *corev1.Pod, containerName string) (string, error) {
@@ -199,10 +191,10 @@ func GetLogs(ctx context.Context, pod *corev1.Pod, containerName string) (string
 
 // Records cpu and memory usage metrics for a pod
 // The metrics are collected at pod level, and not at container level
-func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int) (*RecordedMetrics, error) {
+func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int) (*recording.RecordedMetrics, error) {
 	log := log.FromContext(ctx).WithName("runner")
 
-	recordedMetrics := map[metav1.Time]ResourceUsageRecord{}
+	recordedMetrics := map[metav1.Time]recording.ResourceUsageRecord{}
 
 	start := time.Now()
 	end := start.Add(time.Duration(duration) * time.Second)
@@ -233,7 +225,7 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 			continue
 		}
 
-		metric := ResourceUsageRecord{
+		metric := recording.ResourceUsageRecord{
 			Time:   metav1.Now(),
 			CPU:    int64(*podResources.CPU.UsageNanoCores),
 			Memory: int64(*podResources.Memory.WorkingSetBytes),
@@ -256,7 +248,7 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 		time.Sleep(time.Duration(interval) * time.Second)
 	}
 
-	recordedMetricsData := RecordedMetrics{
+	recordedMetricsData := recording.RecordedMetrics{
 		Pod:      pod.Name,
 		Start:    start,
 		End:      end,

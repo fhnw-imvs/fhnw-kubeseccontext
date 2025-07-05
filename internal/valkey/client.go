@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 	"github.com/valkey-io/valkey-go"
 )
 
@@ -64,7 +64,7 @@ func (v ValkeyClient) deleteEntry(ctx context.Context, key string) error {
 	return nil
 }
 
-func (v ValkeyClient) StoreRecording(ctx context.Context, suffix string, recording *runner.WorkloadRecording) error {
+func (v ValkeyClient) StoreRecording(ctx context.Context, suffix string, recording *recording.WorkloadRecording) error {
 	key := "recording:" + suffix + ":" + recording.Type
 
 	// Store the metrics in Valkey
@@ -76,7 +76,7 @@ func (v ValkeyClient) StoreRecording(ctx context.Context, suffix string, recordi
 	return v.storeEntry(ctx, key, string(jsonB))
 }
 
-func (v ValkeyClient) GetRecording(ctx context.Context, keySuffix string) (*runner.WorkloadRecording, error) {
+func (v ValkeyClient) GetRecording(ctx context.Context, keySuffix string) (*recording.WorkloadRecording, error) {
 
 	key := "recording:" + keySuffix
 
@@ -88,7 +88,7 @@ func (v ValkeyClient) GetRecording(ctx context.Context, keySuffix string) (*runn
 		return nil, nil // No recording found for the given key
 	}
 
-	var recording runner.WorkloadRecording
+	var recording recording.WorkloadRecording
 	err = json.Unmarshal([]byte(value), &recording)
 	if err != nil {
 		return nil, err
