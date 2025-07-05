@@ -1,9 +1,20 @@
-package runner
+package recording
 
 import (
+	"time"
+
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
+
+type RecordedMetrics struct {
+	Pod      string                              `json:"pod"`
+	Start    time.Time                           `json:"start_time"`
+	End      time.Time                           `json:"end_time"`
+	Interval int                                 `json:"interval"`
+	Duration int                                 `json:"duration"`
+	Usage    map[metav1.Time]ResourceUsageRecord `json:"usage"`
+}
 
 // WorkloadRecording contains all signals recorded during a single check/job
 type WorkloadRecording struct {

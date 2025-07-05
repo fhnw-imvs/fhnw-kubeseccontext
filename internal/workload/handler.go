@@ -8,12 +8,15 @@ import (
 	"github.com/go-logr/logr"
 	appsv1 "k8s.io/api/apps/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type WorkloadHandler struct {
@@ -104,4 +107,58 @@ func VerifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {
 	}
 
 	return false, fmt.Errorf("kind of workloadUnderTest not supported")
+}
+
+func (r *WorkloadHandler) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
+	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var labelSelector *metav1.LabelSelector
+
+	switch v := (*workloadUnderTest).(type) {
+	case *appsv1.Deployment:
+		labelSelector = v.Spec.Selector
+	case *appsv1.StatefulSet:
+		labelSelector = v.Spec.Selector
+	case *appsv1.DaemonSet:
+		labelSelector = v.Spec.Selector
+	}
+
+	return metav1.LabelSelectorAsSelector(labelSelector)
+}
+
+func (r *WorkloadHandler) SetCondition(ctx context.Context, condition metav1.Condition) error {
+
+	log := log.FromContext(ctx)
+
+	var err error
+	retryCount := 0
+
+	// retry 3 times to update the status of the WorkloadHardeningCheck, to avoid concurrent updates failing
+	for retryCount < 3 {
+		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
+		if err = r.Get(ctx, types.NamespacedName{Name: r.w.Name, Namespace: r.w.Namespace}, r.w); err != nil {
+			log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+			return err
+		}
+
+		// Set/Update condition
+		meta.SetStatusCondition(
+			&r.w.Status.Conditions,
+			condition,
+		)
+
+		if err := r.Status().Update(ctx, r.w); err != nil {
+			log.V(3).Info("Failed to update WorkloadHardeningCheck status, retrying")
+			retryCount++
+			continue // Retry updating the status
+		} else {
+			break
+		}
+
+	}
+
+	return err
 }
