@@ -22,10 +22,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var podMetrics = map[string]map[types.UID]statsapi.PodStats{}
+var podMetrics = map[types.UID]statsapi.PodStats{}
 var knownPods = []types.UID{}
 var podMetricsLastUpdate = time.Time{}
-var nodePodMetricsLastUpdate = map[string]time.Time{}
 
 var refreshMutex sync.Mutex
 
@@ -54,11 +53,11 @@ func GetNodes() (*corev1.NodeList, error) {
 
 func GetPodResourceUsage(pod corev1.Pod) (*statsapi.PodStats, error) {
 
-	if _, ok := nodePodMetricsLastUpdate[pod.Spec.NodeName]; !ok {
+	if podMetricsLastUpdate.IsZero() {
 		return nil, &PodError{Pod: pod, message: "pod metrics not initialized"}
 	}
 
-	if podStat, ok := podMetrics[pod.Spec.NodeName][pod.ObjectMeta.UID]; ok {
+	if podStat, ok := podMetrics[pod.ObjectMeta.UID]; ok {
 		return &podStat, nil
 	} else {
 		return nil, &PodError{Pod: pod, message: "pod not found in metrics"}
@@ -83,23 +82,39 @@ func RefreshPodMetrics(ctx context.Context) error {
 	var wg sync.WaitGroup
 	wg.Add(len(nodes.Items))
 
+	resultsChannel := make(chan map[types.UID]statsapi.PodStats, len(nodes.Items))
+
 	for _, node := range nodes.Items {
 		// update nodes in parallel
 		go func() {
-			RefreshPodMetricsPerNode(ctx, node.Name)
+			RefreshPodMetricsPerNode(ctx, node.Name, resultsChannel)
 			wg.Done()
 		}()
 	}
 
 	wg.Wait()
 
+	close(resultsChannel)
+
+	newPodMetrics := map[types.UID]statsapi.PodStats{}
+	newKnownPods := []types.UID{}
+
+	for result := range resultsChannel {
+		for uid, podStat := range result {
+			newPodMetrics[uid] = podStat
+			newKnownPods = append(newKnownPods, uid)
+		}
+	}
+
 	podMetricsLastUpdate = time.Now()
+	podMetrics = newPodMetrics
+	knownPods = newKnownPods
 
 	return nil
 
 }
 
-func RefreshPodMetricsPerNode(ctx context.Context, nodeName string) error {
+func RefreshPodMetricsPerNode(ctx context.Context, nodeName string, resultsChannel chan map[types.UID]statsapi.PodStats) error {
 	if time.Since(podMetricsLastUpdate) < 10*time.Second {
 		fmt.Println("Pod metrics already refreshed within the last 10 seconds")
 		return nil
@@ -114,13 +129,11 @@ func RefreshPodMetricsPerNode(ctx context.Context, nodeName string) error {
 	}
 
 	for _, pod := range nodeMetrics.Pods {
-		nodePodMetrics[types.UID(pod.PodRef.UID)] = pod
+		podMetrics[types.UID(pod.PodRef.UID)] = pod
 		knownPods = append(knownPods, types.UID(pod.PodRef.UID))
 	}
 
-	podMetrics[nodeName] = nodePodMetrics
-
-	nodePodMetricsLastUpdate[nodeName] = time.Now()
+	resultsChannel <- nodePodMetrics
 
 	return nil
 
@@ -208,7 +221,7 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 		if pod.Spec.NodeName == "" {
 			return nil, fmt.Errorf("pod %s has no node assigned", pod.Name)
 		}
-		err := RefreshPodMetricsPerNode(ctx, pod.Spec.NodeName)
+		err := RefreshPodMetrics(ctx)
 		if err != nil {
 			return nil, err
 		}
