@@ -182,12 +182,12 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		// Run all checks in parallel
 		for _, checkType := range podChecks {
 
-			if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, titleCase.String(checkType)+typeWorkloadCheck) {
+			if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
 				log.Info("Check already finished, skipping", "checkType", checkType)
 				continue // Skip if the check is already recorded
 			}
 
-			if meta.IsStatusConditionFalse(workloadHardening.Status.Conditions, titleCase.String(checkType)+typeWorkloadCheck) {
+			if meta.IsStatusConditionFalse(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
 				log.Info("Check still running, skipping", "checkType", checkType)
 				continue // Skip if the check is already recorded
 			}
