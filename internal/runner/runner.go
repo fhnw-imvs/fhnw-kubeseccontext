@@ -20,7 +20,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -40,21 +39,14 @@ type CheckRunner struct {
 // Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
 var titleCase = cases.Title(language.English)
 
-func NewCheckRunner(ctx context.Context, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
-
-	l := log.FromContext(ctx).WithName("WorkloadHandler")
-	config, err := ctrl.GetConfig()
-	if err != nil {
-		l.Error(err, "Failed to get runtime client config")
-	}
-	c, err := client.New(config, client.Options{})
-	if err != nil {
-		l.Error(err, "Failed to create client")
-	}
+func NewCheckRunner(ctx context.Context, client client.Client, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
 
 	return &CheckRunner{
-		Client:                 c,
-		WorkloadHandler:        wh.NewWorkloadHandler(ctx, workloadHardeningCheck),
+		Client:                 client,
+		l:                      log.FromContext(ctx).WithName("WorkloadHandler"),
+		valKeyClient:           valKeyClient,
+		recorder:               recorder,
+		WorkloadHandler:        wh.NewWorkloadHandler(ctx, client, workloadHardeningCheck),
 		workloadHardeningCheck: workloadHardeningCheck,
 		checkType:              checkType,
 	}
@@ -193,7 +185,26 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 	)
 
-	err = wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
+	if securityContext != nil {
+		err = wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
+		if err != nil {
+			log.Error(err, "failed to apply security context to workload under test",
+				"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
+			)
+			if r.checkType == "baseline" {
+				conditionReason = checksv1alpha1.ReasonBaselineFailed
+			} else {
+				conditionReason = titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFailed
+			}
+			r.SetCondition(ctx, metav1.Condition{
+				Type:    conditionType,
+				Status:  metav1.ConditionTrue,
+				Reason:  conditionReason,
+				Message: "Failed to apply security context to workload",
+			})
+			return
+		}
+	}
 
 	err = r.Update(ctx, *workloadUnderTest)
 	if err != nil {

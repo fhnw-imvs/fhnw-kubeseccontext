@@ -161,7 +161,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		// Set the condition to indicate that we are starting the baseline recording
 
 		// Refactor to be reusable for other checks, than the baseline
-		runner := runner.NewCheckRunner(ctx, workloadHardening, "baseline")
+		runner := runner.NewCheckRunner(ctx, r.Client, r.ValKeyClient, r.Recorder, workloadHardening, "baseline")
 
 		go runner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
@@ -229,7 +229,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 				}
 			}
 
-			runner := runner.NewCheckRunner(ctx, workloadHardening, checkType)
+			runner := runner.NewCheckRunner(ctx, r.Client, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
 
 			go runner.RunCheck(ctx, securityContext)
 		}

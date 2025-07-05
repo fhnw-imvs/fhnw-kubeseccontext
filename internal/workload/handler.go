@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -27,20 +26,11 @@ type WorkloadHandler struct {
 	w *checksv1alpha1.WorkloadHardeningCheck
 }
 
-func NewWorkloadHandler(ctx context.Context, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadHandler {
-	l := log.FromContext(ctx).WithName("WorkloadHandler")
-	config, err := ctrl.GetConfig()
-	if err != nil {
-		l.Error(err, "Failed to get runtime client config")
-	}
-	c, err := client.New(config, client.Options{})
-	if err != nil {
-		l.Error(err, "Failed to create client")
-	}
+func NewWorkloadHandler(ctx context.Context, client client.Client, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadHandler {
 
 	return &WorkloadHandler{
-		Client: c,
-		l:      l,
+		Client: client,
+		l:      log.FromContext(ctx).WithName("WorkloadHandler"),
 		w:      workloadHardeningCheck,
 	}
 
