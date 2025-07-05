@@ -23,6 +23,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -104,7 +105,20 @@ func (v *WorkloadHardeningCheckCustomValidator) ValidateCreate(ctx context.Conte
 		return nil, fmt.Errorf("suffix must be set during creation of WorkloadHardeningCheck")
 	}
 
-	workloadHandler := workload.NewWorkloadHandler(ctx, workloadhardeningcheck)
+	config, err := ctrl.GetConfig()
+	if err != nil {
+		log.Error(err, "Failed to get runtime client config")
+		return nil, fmt.Errorf("failed to get runtime client config: %w", err)
+	}
+	scheme := runtime.NewScheme()
+	if err := checksv1alpha1.AddToScheme(scheme); err != nil {
+		log.Error(err, "Failed to add scheme for WorkloadHardeningCheck")
+		return nil, fmt.Errorf("failed to add scheme for WorkloadHardeningCheck: %w", err)
+	}
+
+	c, err := client.New(config, client.Options{Scheme: scheme})
+
+	workloadHandler := workload.NewWorkloadHandler(ctx, c, workloadhardeningcheck)
 	if workloadHandler == nil {
 		log.Error(fmt.Errorf("failed to create workload handler"), "WorkloadHandler creation failed")
 		return nil, fmt.Errorf("failed to create workload handler for WorkloadHardeningCheck")
