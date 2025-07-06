@@ -175,11 +175,13 @@ const (
 	ConditionTypeBaseline = "Baseline"
 	// Represents ongoing check jobs, this state will be used until all checks are finished
 	ConditionTypeCheck = "Check"
+	// All checks are finished, the comparison of the baseline and the checks is done, and the results are available
+	ConditionTypeFinished = "Finished"
 
 	// Baseline recording states
-	ReasonBaselineRecording = "BaselineRecording"
-	ReasonBaselineFailed    = "BaselineRecordingFailed"
-	ReasonBaselineRecorded  = "BaselineRecordingFinished"
+	ReasonBaselineRecording         = "BaselineRecording"
+	ReasonBaselineRecordingFailed   = "BaselineRecordingFailed"
+	ReasonBaselineRecordingFinished = "BaselineRecordingFinished"
 
 	// single check, prefixed with the check name
 	ReasonCheckRecording         = "CheckRecording"
@@ -191,7 +193,7 @@ const (
 type WorkloadHardeningCheckStatus struct {
 
 	// Represents the observations of a WorkloadHardeningCheck's current state.
-	// WorkloadHardeningCheck.status.conditions.type are: "Preparation", "Baseline", "Running", "Finished" and "Failed"
+	// WorkloadHardeningCheck.status.conditions.type are: "Preparation", "Baseline", "Check"
 	// WorkloadHardeningCheck.status.conditions.status are one of True, False, Unknown.
 	// WorkloadHardeningCheck.status.conditions.reason the value should be a CamelCase string and producers of specific
 	// condition types may define expected values and meanings for this field, and whether the values
@@ -238,24 +240,27 @@ func (w *WorkloadHardeningCheck) BaselineRecorded() bool {
 
 	if meta.IsStatusConditionTrue(w.Status.Conditions, ConditionTypeBaseline) {
 		condition := meta.FindStatusCondition(w.Status.Conditions, ConditionTypeBaseline)
-		return condition.Reason == ReasonBaselineRecorded
+		return condition.Reason == ReasonBaselineRecordingFinished
 	}
 	return false
 }
 
 func (w *WorkloadHardeningCheck) AllChecksFinished() bool {
 
+	if !w.BaselineRecorded() {
+		return false // Baseline must be recorded before checks can be considered finished
+	}
+
 	for _, condition := range w.Status.Conditions {
 		if strings.Contains(condition.Type, ConditionTypeCheck) {
-			if condition.Status == metav1.ConditionTrue && condition.Reason == ReasonCheckRecording {
-				return true // At least one check is still running
+			if condition.Reason == ReasonCheckRecording {
+				return false // At least one check is still running
 			}
-
 		}
 	}
 
 	// If we reach here, it means no checks are running
-	return false
+	return true
 }
 
 // +kubebuilder:object:root=true

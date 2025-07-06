@@ -18,22 +18,17 @@ type RecordedMetrics struct {
 
 // WorkloadRecording contains all signals recorded during a single check/job
 type WorkloadRecording struct {
-	// Type of workload recording. Allowed values: Baseline,HardeningJob
-	// +kubebuilder:validation:Enum=Baseline;HardeningJob
+	// Type of workload recording. Allowed values: Baseline,*Check
 	Type string `json:"type,omitempty"`
 
 	// Indicates wether this configuration ran successfully or not
 	Success bool `json:"success"`
 
 	// Time the recording started at
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Format=date-time
-	StartTime metav1.Time `json:"startTime,omitempty" protobuf:"bytes,8,opt,name=timestamp"`
+	StartTime metav1.Time `json:"startTime,omitempty"`
 
 	// Time the recording ended at
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Format=date-time
-	EndTime metav1.Time `json:"endTime,omitempty" protobuf:"bytes,8,opt,name=timestamp"`
+	EndTime metav1.Time `json:"endTime,omitempty"`
 
 	// The securityContext configurations applied for this job
 	SecurityContextConfigurations *checksv1alpha1.SecurityContextDefaults `json:"securityContextConfigurations,omitempty"`
@@ -46,9 +41,7 @@ type WorkloadRecording struct {
 
 type ResourceUsageRecord struct {
 	// Time when this recording was taken. Used to sort the recordings
-	// +kubebuilder:validation:Type=string
-	// +kubebuilder:validation:Format=date-time
-	Time metav1.Time `json:"timestamp,omitempty" protobuf:"bytes,8,opt,name=timestamp"`
+	Time metav1.Time `json:"timestamp,omitempty"`
 	// CPU usage in nanocpu
 	CPU int64 `json:"cpu,omitempty"`
 	// Memory usage in bytes

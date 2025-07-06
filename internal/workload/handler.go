@@ -36,9 +36,8 @@ func NewWorkloadHandler(ctx context.Context, client client.Client, workloadHarde
 
 }
 
-func (h *WorkloadHandler) GetWorkloadUnderTest(ctx context.Context) (*client.Object, error) {
+func (h *WorkloadHandler) GetWorkloadUnderTest(ctx context.Context, namespace string) (*client.Object, error) {
 
-	namespace := h.w.GetNamespace()
 	name := h.w.Spec.TargetRef.Name
 	kind := h.w.Spec.TargetRef.Kind
 
@@ -76,8 +75,8 @@ func (h *WorkloadHandler) GetWorkloadUnderTest(ctx context.Context) (*client.Obj
 	return &workloadUnderTest, nil
 }
 
-func (h *WorkloadHandler) VerifyRunning(ctx context.Context) (bool, error) {
-	workloadUnderTestPtr, err := h.GetWorkloadUnderTest(ctx)
+func (h *WorkloadHandler) VerifyRunning(ctx context.Context, namespace string) (bool, error) {
+	workloadUnderTestPtr, err := h.GetWorkloadUnderTest(ctx, namespace)
 	if err != nil {
 		h.l.Error(err, "failed to get workload under test")
 		return false, fmt.Errorf("failed to get workload under test: %w", err)
@@ -100,7 +99,7 @@ func VerifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {
 }
 
 func (r *WorkloadHandler) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
-	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx)
+	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, r.w.GetNamespace())
 	if err != nil {
 		return nil, err
 	}

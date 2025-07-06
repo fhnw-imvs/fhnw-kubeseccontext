@@ -121,7 +121,7 @@ func RefreshPodMetricsPerNode(ctx context.Context, nodeName string, resultsChann
 	}
 
 	// Reset the pod metrics map and known pods
-	nodePodMetrics := map[types.UID]statsapi.PodStats{}
+	newMetrics := map[types.UID]statsapi.PodStats{}
 
 	nodeMetrics, err := getNodeMetrics(ctx, nodeName)
 	if err != nil {
@@ -129,11 +129,10 @@ func RefreshPodMetricsPerNode(ctx context.Context, nodeName string, resultsChann
 	}
 
 	for _, pod := range nodeMetrics.Pods {
-		podMetrics[types.UID(pod.PodRef.UID)] = pod
-		knownPods = append(knownPods, types.UID(pod.PodRef.UID))
+		newMetrics[types.UID(pod.PodRef.UID)] = pod
 	}
 
-	resultsChannel <- nodePodMetrics
+	resultsChannel <- newMetrics
 
 	return nil
 
@@ -170,8 +169,7 @@ func getNodeMetrics(ctx context.Context, nodeName string) (*statsapi.Summary, er
 	return &metrics, nil
 }
 
-// Fetches the logs of the default container
-// To support multiple containers, this needs to be adjusted, and also init-container should be handled
+// Fetches the logs of a specific pod and container
 func GetLogs(ctx context.Context, pod *corev1.Pod, containerName string) (string, error) {
 	podLogOpts := corev1.PodLogOptions{
 		// Always choose the first pod
