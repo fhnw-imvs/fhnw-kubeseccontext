@@ -34,12 +34,18 @@ type CheckRunner struct {
 
 	workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck
 	checkType              string
+	conditionType          string
 }
 
 // Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
 var titleCase = cases.Title(language.English)
 
 func NewCheckRunner(ctx context.Context, client client.Client, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
+
+	conditionTYpe := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
+	if checkType == "baseline" {
+		conditionTYpe = checksv1alpha1.ConditionTypeBaseline
+	}
 
 	return &CheckRunner{
 		Client:                 client,
@@ -49,20 +55,18 @@ func NewCheckRunner(ctx context.Context, client client.Client, valKeyClient *val
 		WorkloadHandler:        wh.NewWorkloadHandler(ctx, client, workloadHardeningCheck),
 		workloadHardeningCheck: workloadHardeningCheck,
 		checkType:              checkType,
+		conditionType:          conditionTYpe,
 	}
+
 }
 
-func generateTargetNamespaceName(
-	workloadHardening checksv1alpha1.WorkloadHardeningCheck,
-	checkName string,
-) string {
-	// create a random namespace name. They are limited to 253 chars in kubernetes, but we make it a bit shorter by default
-	// We might add an additional identifier (eg. baseline, runAsNonRoot, etc) later on to make differentiation eaiser for the user
-	base := workloadHardening.Namespace
+// Create the target namespace name. It consists of the base namespace, the suffix set on the workload hardening check, and the check type.
+func (r *CheckRunner) generateTargetNamespaceName() string {
+	base := r.workloadHardeningCheck.Namespace
 	if len(base) > 200 {
 		base = base[:200]
 	}
-	return fmt.Sprintf("%s-%s-%s", base, workloadHardening.Spec.Suffix, checkName)
+	return fmt.Sprintf("%s-%s-%s", base, r.workloadHardeningCheck.Spec.Suffix, r.checkType)
 }
 
 func (r *CheckRunner) namespaceExists(ctx context.Context, namespaceName string) bool {
@@ -72,13 +76,16 @@ func (r *CheckRunner) namespaceExists(ctx context.Context, namespaceName string)
 	return !apierrors.IsNotFound(err)
 }
 
-func (r *CheckRunner) createCheckNamespace(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, targetNamespace string) error {
+// createCheckNamespace clones the namespace of the workload hardening check target workload into a new namespace.
+func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
 	log := log.FromContext(ctx)
 
-	err := CloneNamespace(ctx, workloadHardening.Namespace, targetNamespace, workloadHardening.Spec.Suffix)
+	targetNamespace := r.generateTargetNamespaceName()
+
+	err := CloneNamespace(ctx, r.workloadHardeningCheck.Namespace, targetNamespace, r.workloadHardeningCheck.Spec.Suffix)
 
 	if err != nil {
-		log.Error(err, fmt.Sprintf("failed to clone namespace %s", workloadHardening.Namespace))
+		log.Error(err, fmt.Sprintf("failed to clone namespace %s", r.workloadHardeningCheck.Namespace))
 		return err
 	}
 
@@ -110,7 +117,8 @@ func (r *CheckRunner) createCheckNamespace(ctx context.Context, workloadHardenin
 
 }
 
-func (r *CheckRunner) deleteNamespace(ctx context.Context, namespaceName string) error {
+func (r *CheckRunner) deleteCheckNamespace(ctx context.Context) error {
+	namespaceName := r.generateTargetNamespaceName()
 	log := log.FromContext(ctx).WithValues("namespace", namespaceName)
 	targetNs := &corev1.Namespace{}
 	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
@@ -131,26 +139,62 @@ func (r *CheckRunner) deleteNamespace(ctx context.Context, namespaceName string)
 	return nil
 }
 
+func (r *CheckRunner) setConditionFailed(ctx context.Context, message string) {
+	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFailed
+	if r.checkType == "baseline" {
+		conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
+	}
+
+	r.SetCondition(ctx, metav1.Condition{
+		Type:    r.conditionType,
+		Status:  metav1.ConditionUnknown,
+		Reason:  conditionReason,
+		Message: message,
+	})
+
+}
+
+func (r *CheckRunner) setConditionFinished(ctx context.Context, message string) {
+	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFinished
+	if r.checkType == "baseline" {
+		conditionReason = checksv1alpha1.ReasonBaselineRecordingFinished
+	}
+
+	r.SetCondition(ctx, metav1.Condition{
+		Type:    r.conditionType,
+		Status:  metav1.ConditionTrue,
+		Reason:  conditionReason,
+		Message: message,
+	})
+}
+
+func (r *CheckRunner) setConditionRunning(ctx context.Context, message string) {
+	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecording
+	if r.checkType == "baseline" {
+		conditionReason = checksv1alpha1.ReasonBaselineRecording
+	}
+
+	r.SetCondition(ctx, metav1.Condition{
+		Type:    r.conditionType,
+		Status:  metav1.ConditionFalse,
+		Reason:  conditionReason,
+		Message: message,
+	})
+}
+
 func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alpha1.SecurityContextDefaults) {
-	var conditionType string
 	var conditionReason string
 	log := log.FromContext(ctx).WithValues("checkType", r.checkType)
 
-	if r.checkType == "baseline" {
-		conditionType = checksv1alpha1.ConditionTypeBaseline
-
-	} else {
-		conditionType = titleCase.String(r.checkType) + checksv1alpha1.ConditionTypeCheck
-	}
-
-	targetNamespaceName := generateTargetNamespaceName(*r.workloadHardeningCheck, r.checkType)
+	targetNamespaceName := r.generateTargetNamespaceName()
 
 	log = log.WithValues("targetNamespace", targetNamespaceName)
 
+	// Check if the target namespace already exists, otherwise create it
 	if r.namespaceExists(ctx, targetNamespaceName) {
 		if meta.IsStatusConditionPresentAndEqual(
 			r.workloadHardeningCheck.Status.Conditions,
-			conditionType,
+			r.conditionType,
 			metav1.ConditionUnknown,
 		) {
 			log.V(1).Info(
@@ -161,7 +205,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	} else {
 
 		// clone into target namespace
-		err := r.createCheckNamespace(ctx, r.workloadHardeningCheck, targetNamespaceName)
+		err := r.createCheckNamespace(ctx)
 		if err != nil {
 			log.Error(err, "failed to create target namespace for baseline recording")
 			return
@@ -172,8 +216,11 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		time.Sleep(1 * time.Second) // Give the namespace some time to be fully created and ready
 	}
 
+	// Set condition to false, as we are about to start the check
+	r.setConditionRunning(ctx, "Starting recording signals")
+
 	// Fetch the workload we want to test, make sure we fetch it from the target namespace
-	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx)
+	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, targetNamespaceName)
 	if err != nil {
 		log.Error(err, "failed to get workload under test",
 			"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
@@ -191,17 +238,8 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 			log.Error(err, "failed to apply security context to workload under test",
 				"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 			)
-			if r.checkType == "baseline" {
-				conditionReason = checksv1alpha1.ReasonBaselineFailed
-			} else {
-				conditionReason = titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFailed
-			}
-			r.SetCondition(ctx, metav1.Condition{
-				Type:    conditionType,
-				Status:  metav1.ConditionTrue,
-				Reason:  conditionReason,
-				Message: "Failed to apply security context to workload",
-			})
+			r.setConditionFailed(ctx, "Failed to apply security context to workload")
+
 			return
 		}
 	}
@@ -211,19 +249,8 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		log.Error(err, "failed to update workload under test with security context",
 			"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 		)
-		if r.checkType == "baseline" {
-			conditionReason = checksv1alpha1.ReasonBaselineRecording
+		r.setConditionFailed(ctx, "Failed to update security context on workload")
 
-		} else {
-			conditionReason = titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecording
-		}
-
-		r.SetCondition(ctx, metav1.Condition{
-			Type:    conditionType,
-			Status:  metav1.ConditionUnknown,
-			Reason:  conditionReason,
-			Message: "Failed to apply security context to workload",
-		})
 		return
 	}
 	log.Info("applied security context to workload under test",
@@ -243,17 +270,8 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 				"checkType", r.checkType,
 				"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 			)
-			if r.checkType == "baseline" {
-				conditionReason = checksv1alpha1.ReasonBaselineFailed
-			} else {
-				conditionReason = titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFailed
-			}
-			r.SetCondition(ctx, metav1.Condition{
-				Type:    conditionType,
-				Status:  metav1.ConditionTrue,
-				Reason:  conditionReason,
-				Message: "Timeout while waiting for workload to be running",
-			})
+			r.setConditionFailed(ctx, "Timeout while waiting for workload to be running")
+
 			r.recorder.Event(
 				r.workloadHardeningCheck,
 				corev1.EventTypeWarning,
@@ -265,7 +283,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 				),
 			)
 
-			//ToDo: Fetch pod events & maybe pod logs, to add context to the failure
+			//ToDo: Fetch pod events & pod logs, to add context to the failure
 
 			err = r.valKeyClient.StoreRecording(
 				ctx,
@@ -283,7 +301,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 				log.Error(err, "failed to store workload recording in Valkey")
 			}
 
-			err = r.deleteNamespace(ctx, targetNamespaceName)
+			err = r.deleteCheckNamespace(ctx)
 			if err != nil {
 				log.Error(err, "failed to delete target namespace with failed workload")
 			}
@@ -302,40 +320,20 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 	)
 
-	if r.checkType == "baseline" {
-		conditionReason = checksv1alpha1.ReasonBaselineRecording
-	} else {
-		conditionReason = titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecording
-	}
-
-	r.SetCondition(ctx, metav1.Condition{
-		Type:    conditionType,
-		Status:  metav1.ConditionTrue,
-		Reason:  conditionReason,
-		Message: "Recording signals",
-	})
+	r.setConditionRunning(ctx, "Recording signals")
 
 	// start recording metrics for target workload
-	workloadRecording, err := r.RecordSignals(ctx, targetNamespaceName, r.checkType, securityContext)
+	workloadRecording, err := r.RecordSignals(ctx)
 
 	if err != nil {
 		log.Error(err, "failed to record signals")
 
-		if r.checkType == "baseline" {
-			conditionReason = checksv1alpha1.ReasonBaselineFailed
-		} else {
-			conditionReason = titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFailed
-		}
-
-		r.SetCondition(ctx, metav1.Condition{
-			Type:    conditionType,
-			Status:  metav1.ConditionTrue,
-			Reason:  conditionReason,
-			Message: "Failed to record signals",
-		})
+		r.setConditionFailed(ctx, "Failed to record signals")
 
 		return
 	}
+
+	workloadRecording.SecurityContextConfigurations = securityContext
 
 	err = r.valKeyClient.StoreRecording(
 		ctx,
@@ -350,18 +348,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 
 	log.Info("recorded signals")
 
-	if r.checkType == "baseline" {
-		conditionReason = checksv1alpha1.ReasonBaselineRecorded
-	} else {
-		conditionReason = titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFinished
-	}
-
-	err = r.SetCondition(ctx, metav1.Condition{
-		Type:    conditionType,
-		Status:  metav1.ConditionTrue,
-		Reason:  conditionReason,
-		Message: "Signals recorded successfully",
-	})
+	r.setConditionFinished(ctx, "Signals recorded successfully")
 
 	r.recorder.Event(
 		r.workloadHardeningCheck,
@@ -379,7 +366,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	}
 
 	// Cleanup: delete the check namespace after recording
-	err = r.deleteNamespace(ctx, targetNamespaceName)
+	err = r.deleteCheckNamespace(ctx)
 	if err != nil {
 		log.Error(err, "failed to delete target namespace after recording")
 	} else {
@@ -387,10 +374,11 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	}
 }
 
-func (r *CheckRunner) RecordSignals(ctx context.Context, targetNamespace, recordingType string, securityContext *checksv1alpha1.SecurityContextDefaults) (*recording.WorkloadRecording, error) {
+func (r *CheckRunner) RecordSignals(ctx context.Context) (*recording.WorkloadRecording, error) {
+	targetNamespace := r.generateTargetNamespaceName()
 	log := log.FromContext(ctx).WithValues(
 		"targetNamespace", targetNamespace,
-		"recordingType", recordingType,
+		"checkType", r.checkType,
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 	)
 
@@ -516,14 +504,13 @@ func (r *CheckRunner) RecordSignals(ctx context.Context, targetNamespace, record
 	log.V(1).Info("collected logs")
 
 	workloadRecording := recording.WorkloadRecording{
-		Type:      recordingType,
+		Type:      r.checkType,
 		Success:   true,
 		StartTime: startTime,
 		EndTime:   metav1.Now(),
 
-		SecurityContextConfigurations: securityContext,
-		RecordedMetrics:               resourceUsageRecords,
-		Logs:                          logs,
+		RecordedMetrics: resourceUsageRecords,
+		Logs:            logs,
 	}
 
 	return &workloadRecording, nil

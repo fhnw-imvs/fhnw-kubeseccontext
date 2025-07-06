@@ -43,27 +43,6 @@ import (
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 )
 
-// Definitions to manage status conditions
-const (
-	// Represents the initial state, before the baseline recording is started
-	typeWorkloadCheckStartup = "Preparation"
-	// Represents a running baseline recording
-	typeWorkloadCheckBaseline = "Baseline"
-	// Represents ongoing check jobs, this state will be used until all checks are finished
-	typeWorkloadCheck = "Check"
-
-	// Baseline is currently being recorded
-	reasonBaselineRecording = "BaselineRecording"
-	reasonBaselineFailed    = "BaselineRecordingFailed"
-	// Baseline has been recorded successfully
-	reasonBaselineRecorded = "BaselineRecorded"
-
-	// Single check
-	reasonCheckRecording = "CheckRecording"
-	reasonCheckFailed    = "CheckRecordingFailed"
-	reasonCheckRecorded  = "CheckRecorded"
-)
-
 // WorkloadHardeningCheckReconciler reconciles a WorkloadHardeningCheck object
 type WorkloadHardeningCheckReconciler struct {
 	client.Client
@@ -138,8 +117,9 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// Let's just set the status as Unknown when no status is available
 	if len(workloadHardening.Status.Conditions) == 0 {
+
 		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
-			Type:    typeWorkloadCheckStartup,
+			Type:    checksv1alpha1.ConditionTypePreparation,
 			Status:  metav1.ConditionUnknown,
 			Reason:  "Verifying",
 			Message: "Starting reconciliation",
@@ -154,7 +134,8 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// Based on the Status, we need to decide what to do next
 	// If there is no Baseline recorded yet, we need to start the baseline recording
-	if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, typeWorkloadCheckBaseline) {
+
+	if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
 		log.Info("Baseline recorded. Start recording different security context configurations")
 	} else {
 		log.Info("Baseline not recorded yet. Starting baseline recording")

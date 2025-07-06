@@ -125,7 +125,7 @@ func (v *WorkloadHardeningCheckCustomValidator) ValidateCreate(ctx context.Conte
 	}
 
 	// Verify that the target workload exists
-	if running, err := workloadHandler.VerifyRunning(ctx); err != nil {
+	if running, err := workloadHandler.VerifyRunning(ctx, workloadhardeningcheck.GetNamespace()); err != nil {
 		log.Error(err, "Failed to verify if target workload is running", "name", workloadhardeningcheck.GetName())
 		return nil, fmt.Errorf("failed to verify if target workload is running: %w", err)
 	} else if !running {
