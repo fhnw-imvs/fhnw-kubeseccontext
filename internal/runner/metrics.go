@@ -172,8 +172,8 @@ func getNodeMetrics(ctx context.Context, nodeName string) (*statsapi.Summary, er
 // Fetches the logs of a specific pod and container
 func GetLogs(ctx context.Context, pod *corev1.Pod, containerName string) (string, error) {
 	podLogOpts := corev1.PodLogOptions{
-		// Always choose the first pod
 		Container: containerName,
+		//Previous: false, // Set to true if you want to fetch logs from the previous or a failed container
 	}
 
 	clientset, _ := kubernetes.NewForConfig(config.GetConfigOrDie())
