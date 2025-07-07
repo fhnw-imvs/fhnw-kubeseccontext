@@ -15,23 +15,28 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/orakel"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type WorkloadHandler struct {
 	client.Client
 
+	vk *valkey.ValkeyClient
+
 	l logr.Logger
 
 	w *checksv1alpha1.WorkloadHardeningCheck
 }
 
-func NewWorkloadHandler(ctx context.Context, client client.Client, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadHandler {
+func NewWorkloadHandler(ctx context.Context, valKeyClient *valkey.ValkeyClient, client client.Client, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadHandler {
 
 	return &WorkloadHandler{
 		Client: client,
 		l:      log.FromContext(ctx).WithName("WorkloadHandler"),
 		w:      workloadHardeningCheck,
+		vk:     valKeyClient,
 	}
 
 }
@@ -150,4 +155,63 @@ func (r *WorkloadHandler) SetCondition(ctx context.Context, condition metav1.Con
 	}
 
 	return err
+}
+
+func (r *WorkloadHandler) AnalyzeCheckRuns(ctx context.Context) error {
+	log := log.FromContext(ctx)
+
+	// Get results from the workload hardening check from ValKey
+	baselineRecording, err := r.vk.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", r.w.Namespace, r.w.Spec.Suffix, "baseline"))
+	if err != nil {
+		log.Error(err, "Failed to get baseline recording from ValKey")
+		return fmt.Errorf("failed to get baseline recording from ValKey: %w", err)
+	}
+	if baselineRecording == nil {
+		log.Info("No baseline recording found, skipping analysis")
+		return nil
+	}
+
+	// Contains a drainMiner for each container in the baseline recording
+	drainMinerPerContainer := make(map[string]*orakel.DrainMiner, len(baselineRecording.Logs))
+
+	for podName, logs := range baselineRecording.Logs {
+		// Initialize a DrainMiner for each pod
+		drainMiner := orakel.NewDrainMiner(logs)
+		drainMiner.LoadBaseline(logs)
+		drainMinerPerContainer[podName] = drainMiner
+
+	}
+
+	// Iterate over all check runs and analyze the logs
+	for _, checkRun := range r.w.Status.CheckRuns {
+		log.V(2).Info("Analyzing check run", "checkRun", checkRun.Name)
+
+		// Get the recording for this check run
+		checkRecording, err := r.vk.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", r.w.Namespace, r.w.Spec.Suffix, checkRun.Name))
+		if err != nil {
+			return fmt.Errorf("failed to get recording for check run from ValKey: %w", err)
+		}
+		if checkRecording == nil {
+			return fmt.Errorf("no recording found for check run %s", checkRun.Name)
+		}
+
+		for podName, logs := range checkRecording.Logs {
+			drainMiner, exists := drainMinerPerContainer[podName]
+			if !exists {
+				log.V(2).Info("No baseline found for pod", "podName", podName)
+				continue
+			}
+
+			anomalies, _ := drainMiner.AnalyzeTarget(logs)
+			if len(anomalies) > 0 {
+				log.V(2).Info("Anomalies found in check run", "checkRun", checkRun.Name, "podName", podName, "anomalyCount", len(anomalies))
+
+			} else {
+				log.V(2).Info("No anomalies found in check run", "checkRun", checkRun.Name, "podName", podName)
+			}
+		}
+	}
+
+	return nil
+
 }

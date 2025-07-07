@@ -170,6 +170,25 @@ spec:
             description: WorkloadHardeningCheckStatus defines the observed state of
               WorkloadHardeningCheck
             properties:
+              checkRuns:
+                description: |-
+                  A list of all check runs that were executed as part of this WorkloadHardeningCheck.
+                  Each check run corresponds to a specific security context configuration applied to the workload.
+                items:
+                  description: CheckRun represents the result of a single check run
+                    within a WorkloadHardeningCheck.
+                  properties:
+                    name:
+                      description: Name of the check run, e.g., "Baseline", "User",
+                        "ReadOnlyRootFilesystem", etc.
+                      type: string
+                    success:
+                      description: Boolean flag indicating whether the check run was
+                        successful or not. A check is considered successful if the
+                        workload started and metrics and logs were recorded.
+                      type: boolean
+                  type: object
+                type: array
               conditions:
                 description: Conditions store the status conditions of the WorkloadHardeningCheck
                   instances
