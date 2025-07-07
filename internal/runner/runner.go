@@ -52,7 +52,7 @@ func NewCheckRunner(ctx context.Context, client client.Client, valKeyClient *val
 		l:                      log.FromContext(ctx).WithName("WorkloadHandler"),
 		valKeyClient:           valKeyClient,
 		recorder:               recorder,
-		WorkloadHandler:        wh.NewWorkloadHandler(ctx, client, workloadHardeningCheck),
+		WorkloadHandler:        wh.NewWorkloadHandler(ctx, valKeyClient, client, workloadHardeningCheck),
 		workloadHardeningCheck: workloadHardeningCheck,
 		checkType:              checkType,
 		conditionType:          conditionTYpe,

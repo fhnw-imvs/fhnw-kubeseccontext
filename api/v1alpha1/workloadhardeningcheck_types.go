@@ -204,6 +204,18 @@ type WorkloadHardeningCheckStatus struct {
 	// Conditions store the status conditions of the WorkloadHardeningCheck instances
 	// +operator-sdk:csv:customresourcedefinitions:type=status
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
+
+	// A list of all check runs that were executed as part of this WorkloadHardeningCheck.
+	// Each check run corresponds to a specific security context configuration applied to the workload.
+	CheckRuns []CheckRun `json:"checkRuns,omitempty"`
+}
+
+// CheckRun represents the result of a single check run within a WorkloadHardeningCheck.
+type CheckRun struct {
+	// Name of the check run, e.g., "Baseline", "User", "ReadOnlyRootFilesystem", etc.
+	Name string `json:"name,omitempty"`
+	// Boolean flag indicating whether the check run was successful or not. A check is considered successful if the workload started and metrics and logs were recorded.
+	Success *bool `json:"success,omitempty"`
 }
 
 // +kubebuilder:object:root=true
