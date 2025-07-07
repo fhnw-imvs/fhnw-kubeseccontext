@@ -1,5 +1,10 @@
 # K8s Orakel of Funk
 
+<h1 align="center" style="border-bottom: none">
+    <img alt="OrakelOfFunk" src="/docs/images/logo-orakel-of-funk.png"></a>
+</h1>
+
+
 Keep your Kubernetes workloads in tune — secure and functional.
 
 **WIP: This project is part of a Bachelor thesis at FHNW called _Automated Kubernetes Workload hardening using a Functionality Oracle_.**

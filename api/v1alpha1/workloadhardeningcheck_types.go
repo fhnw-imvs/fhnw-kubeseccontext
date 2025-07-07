@@ -206,6 +206,8 @@ type WorkloadHardeningCheckStatus struct {
 	// A list of all check runs that were executed as part of this WorkloadHardeningCheck.
 	// Each check run corresponds to a specific security context configuration applied to the workload.
 	CheckRuns []CheckRun `json:"checkRuns,omitempty"`
+
+	Recommendation Recommendation `json:"recommendation,omitempty"`
 }
 
 // CheckRun represents the result of a single check run within a WorkloadHardeningCheck.
@@ -221,6 +223,14 @@ type CheckRun struct {
 	// FailureReason provides a reason for the failure of the check run, if applicable.
 	FailureReason string              `json:"failureReason,omitempty"`
 	Anomalies     map[string][]string `json:"anomalies,omitempty"`
+}
+
+// Recommendation provides the recommended security contexts for the workload under test.
+type Recommendation struct {
+	// ContainerSecurityContexts is a map of container names to their recommended security contexts.
+	ContainerSecurityContexts *corev1.SecurityContext `json:"containerSecurityContexts,omitempty"`
+	// PodSecurityContext is the recommended security context for the pod under test.
+	PodSecurityContext *corev1.PodSecurityContext `json:"podSecurityContext,omitempty"`
 }
 
 // +kubebuilder:object:root=true
