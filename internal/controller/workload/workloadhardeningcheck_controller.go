@@ -214,7 +214,21 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 				}
 				if meta.IsStatusConditionFalse(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
 					log.V(2).Info("Check still running, skipping", "checkType", checkType)
-					continue // Skip if the check is already recorded
+
+					condition := meta.FindStatusCondition(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
+					expiryTime := metav1.NewTime(time.Now().Add(-2 * duration))
+					if condition.LastTransitionTime.Before(&expiryTime) {
+						log.V(2).Info("Check still running, but last transition time is older than 2x duration, requeuing", "checkType", checkType)
+						r.setCondition(ctx, workloadHardening, metav1.Condition{
+							Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
+							Status:  metav1.ConditionUnknown,
+							Reason:  "Requeuing",
+							Message: "Check is still running, but last transition time is older than 2x duration, requeuing",
+						})
+
+					} else {
+						continue // Skip if the check is already recorded
+					}
 				}
 
 				securityContext := handler.GetSecurityContextForCheckType(checkType)
@@ -225,8 +239,6 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 				// Requeue the reconciliation after the  duration, to continue with the next check
 				return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
 			}
-
-			// ToDo: How to determnine the order of checks? Which ones are already done?
 		}
 	}
 
@@ -251,6 +263,8 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			})
 			return ctrl.Result{}, nil
 		}
+
+		handler.SetRecommendation(ctx)
 
 		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeAnalysis,

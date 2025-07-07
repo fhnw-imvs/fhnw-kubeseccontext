@@ -11,6 +11,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -287,6 +288,55 @@ func (r *WorkloadCheckHandler) AnalyzeCheckRuns(ctx context.Context) error {
 	// Update the check run status
 	r.workloadHardeningCheck.Status.CheckRuns = checkRuns
 	r.Status().Update(ctx, r.workloadHardeningCheck)
+
+	return nil
+
+}
+
+func (r *WorkloadCheckHandler) SetRecommendation(ctx context.Context) error {
+
+	securityContexts := map[string]*checksv1alpha1.SecurityContextDefaults{}
+
+	// Get the security context for each check type
+	for _, checkRun := range r.workloadHardeningCheck.Status.CheckRuns {
+		if checkRun.Name == "baseline" {
+			continue // Skip baseline check
+		}
+
+		securityContexts[checkRun.Name] = checkRun.SecurityContext
+	}
+
+	podSecurityContext := &corev1.PodSecurityContext{}
+	containerSecurityContext := &corev1.SecurityContext{}
+
+	for _, securityContext := range securityContexts {
+		podSecurityContext = mergePodSecurityContexts(ctx, podSecurityContext, securityContext.Pod.ToK8sSecurityContext())
+		containerSecurityContext = mergeContainerSecurityContexts(ctx, containerSecurityContext, securityContext.Container.ToK8sSecurityContext())
+	}
+
+	retryCount := 0
+	for retryCount < 3 {
+		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
+		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
+			r.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+			return fmt.Errorf("failed to re-fetch WorkloadHardeningCheck: %w", err)
+		}
+		// Set/Update the recommendation
+
+		r.workloadHardeningCheck.Status.Recommendation = checksv1alpha1.Recommendation{
+			ContainerSecurityContexts: containerSecurityContext,
+			PodSecurityContext:        podSecurityContext,
+		}
+
+		err := r.Status().Update(ctx, r.workloadHardeningCheck)
+		if err != nil {
+			r.logger.V(3).Info("Failed to update WorkloadHardeningCheck status, retrying")
+			retryCount++
+			continue // Retry updating the status
+		} else {
+			break
+		}
+	}
 
 	return nil
 
