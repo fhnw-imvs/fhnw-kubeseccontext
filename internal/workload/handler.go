@@ -11,6 +11,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/utils/ptr"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
@@ -20,7 +21,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-type WorkloadHandler struct {
+type WorkloadCheckHandler struct {
 	client.Client
 
 	vk *valkey.ValkeyClient
@@ -30,9 +31,9 @@ type WorkloadHandler struct {
 	w *checksv1alpha1.WorkloadHardeningCheck
 }
 
-func NewWorkloadHandler(ctx context.Context, valKeyClient *valkey.ValkeyClient, client client.Client, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadHandler {
+func NewWorkloadCheckHandler(ctx context.Context, valKeyClient *valkey.ValkeyClient, client client.Client, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadCheckHandler {
 
-	return &WorkloadHandler{
+	return &WorkloadCheckHandler{
 		Client: client,
 		l:      log.FromContext(ctx).WithName("WorkloadHandler"),
 		w:      workloadHardeningCheck,
@@ -41,7 +42,7 @@ func NewWorkloadHandler(ctx context.Context, valKeyClient *valkey.ValkeyClient, 
 
 }
 
-func (h *WorkloadHandler) GetWorkloadUnderTest(ctx context.Context, namespace string) (*client.Object, error) {
+func (h *WorkloadCheckHandler) GetWorkloadUnderTest(ctx context.Context, namespace string) (*client.Object, error) {
 
 	name := h.w.Spec.TargetRef.Name
 	kind := h.w.Spec.TargetRef.Kind
@@ -80,7 +81,7 @@ func (h *WorkloadHandler) GetWorkloadUnderTest(ctx context.Context, namespace st
 	return &workloadUnderTest, nil
 }
 
-func (h *WorkloadHandler) VerifyRunning(ctx context.Context, namespace string) (bool, error) {
+func (h *WorkloadCheckHandler) VerifyRunning(ctx context.Context, namespace string) (bool, error) {
 	workloadUnderTestPtr, err := h.GetWorkloadUnderTest(ctx, namespace)
 	if err != nil {
 		h.l.Error(err, "failed to get workload under test")
@@ -103,7 +104,7 @@ func VerifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {
 	return false, fmt.Errorf("kind of workloadUnderTest not supported")
 }
 
-func (r *WorkloadHandler) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
+func (r *WorkloadCheckHandler) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
 	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, r.w.GetNamespace())
 	if err != nil {
 		return nil, err
@@ -123,7 +124,7 @@ func (r *WorkloadHandler) GetLabelSelector(ctx context.Context) (labels.Selector
 	return metav1.LabelSelectorAsSelector(labelSelector)
 }
 
-func (r *WorkloadHandler) SetCondition(ctx context.Context, condition metav1.Condition) error {
+func (r *WorkloadCheckHandler) SetCondition(ctx context.Context, condition metav1.Condition) error {
 
 	log := log.FromContext(ctx)
 
@@ -157,7 +158,7 @@ func (r *WorkloadHandler) SetCondition(ctx context.Context, condition metav1.Con
 	return err
 }
 
-func (r *WorkloadHandler) AnalyzeCheckRuns(ctx context.Context) error {
+func (r *WorkloadCheckHandler) AnalyzeCheckRuns(ctx context.Context) error {
 	log := log.FromContext(ctx)
 
 	// Get results from the workload hardening check from ValKey
@@ -174,16 +175,26 @@ func (r *WorkloadHandler) AnalyzeCheckRuns(ctx context.Context) error {
 	// Contains a drainMiner for each container in the baseline recording
 	drainMinerPerContainer := make(map[string]*orakel.LogOrakel, len(baselineRecording.Logs))
 
-	for podName, logs := range baselineRecording.Logs {
+	for containerName, logs := range baselineRecording.Logs {
 		// Initialize a DrainMiner for each pod
 		drainMiner := orakel.NewDrainMiner(logs)
 		drainMiner.LoadBaseline(logs)
-		drainMinerPerContainer[podName] = drainMiner
+		drainMinerPerContainer[containerName] = drainMiner
 
 	}
 
+	checkRuns := r.w.Status.CheckRuns
+	// Baseline is also listed as check run
+	if len(checkRuns) <= 0 {
+		log.V(2).Info("No check runs found in workload hardening check status, skipping analysis")
+		return nil
+	}
 	// Iterate over all check runs and analyze the logs
-	for _, checkRun := range r.w.Status.CheckRuns {
+	for i, checkRun := range checkRuns {
+		if checkRun.Name == "baseline" {
+			continue // Skip baseline check run
+		}
+
 		log.V(2).Info("Analyzing check run", "checkRun", checkRun.Name)
 
 		// Get the recording for this check run
@@ -195,22 +206,34 @@ func (r *WorkloadHandler) AnalyzeCheckRuns(ctx context.Context) error {
 			return fmt.Errorf("no recording found for check run %s", checkRun.Name)
 		}
 
-		for podName, logs := range checkRecording.Logs {
-			drainMiner, exists := drainMinerPerContainer[podName]
+		checkSuccessful := true
+		for containerName, logs := range checkRecording.Logs {
+			drainMiner, exists := drainMinerPerContainer[containerName]
 			if !exists {
-				log.V(2).Info("No baseline found for pod", "podName", podName)
+				log.Info("No baseline found for pod", "podName", containerName)
 				continue
 			}
 
 			anomalies, _ := drainMiner.AnalyzeTarget(logs)
 			if len(anomalies) > 0 {
-				log.V(2).Info("Anomalies found in check run", "checkRun", checkRun.Name, "podName", podName, "anomalyCount", len(anomalies))
-
+				log.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
+				checkSuccessful = false
+				if checkRun.Anomalies == nil {
+					checkRuns[i].Anomalies = make(map[string][]string)
+				}
+				checkRuns[i].Anomalies[containerName] = anomalies[len(anomalies)-5:] // Store only the last 5 anomalies for brevity
 			} else {
-				log.V(2).Info("No anomalies found in check run", "checkRun", checkRun.Name, "podName", podName)
+				log.Info("No anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName)
 			}
 		}
+
+		// Update the check run with the analysis results
+		checkRuns[i].CheckSuccessfull = ptr.To(checkSuccessful)
 	}
+
+	// Update the check run status
+	r.w.Status.CheckRuns = checkRuns
+	r.Status().Update(ctx, r.w)
 
 	return nil
 

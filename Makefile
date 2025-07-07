@@ -195,7 +195,7 @@ undeploy: kustomize ## Undeploy controller from the K8s cluster specified in ~/.
 	$(KUSTOMIZE) build config/default | $(KUBECTL) delete --ignore-not-found=$(ignore-not-found) -f -
 
 .PHONY: deploy-kind
-deploy-kind: ## Build a new image, load it into the kind cluster and restart the pod.
+deploy-kind: install ## Build a new image, load it into the kind cluster and restart the pod.
 	$(MAKE) docker-build
 	$(KIND) load docker-image ${IMG}
 	$(KUBECTL) -n orakel-of-funk-system delete pod -l control-plane=controller-manager

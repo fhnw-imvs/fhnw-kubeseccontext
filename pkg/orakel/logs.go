@@ -19,10 +19,7 @@ func NewDrainMiner(delimiters []string) *LogOrakel {
 	drainConfig := drain.DefaultConfig()
 	if delimiters != nil {
 		drainConfig.ExtraDelimiters = delimiters
-	} else {
-		drainConfig.ExtraDelimiters = []string{"\t", " ", ",", ";", ":", "=", "(", ")", "{", "}", "[", "]", "\"", "'", "|", "\\", "/", "!", "?"}
 	}
-
 	return &LogOrakel{
 		Drain: drain.New(drainConfig),
 	}
@@ -36,7 +33,21 @@ func (dm *LogOrakel) LoadBaseline(input []string) int {
 			continue
 		}
 		dm.BaselineLogsCount++
-		dm.Drain.Train(strings.TrimSpace(line))
+		cluster := dm.Drain.Train(strings.TrimSpace(line))
+		if cluster == nil {
+			continue
+		}
+	}
+
+	for _, line := range input {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		dm.BaselineLogsCount++
+		cluster := dm.Drain.Train(strings.TrimSpace(line))
+		if cluster == nil {
+			continue
+		}
 	}
 
 	return dm.BaselineLogsCount

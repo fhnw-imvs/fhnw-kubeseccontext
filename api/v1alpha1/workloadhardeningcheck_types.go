@@ -175,6 +175,8 @@ const (
 	ConditionTypeBaseline = "Baseline"
 	// Represents ongoing check jobs, this state will be used until all checks are finished
 	ConditionTypeCheck = "Check"
+	// All checks are finished, and the results are being analyzed, and the recommendations are being generated
+	ConditionTypeAnalysis = "Analyzing"
 	// All checks are finished, the comparison of the baseline and the checks is done, and the results are available
 	ConditionTypeFinished = "Finished"
 
@@ -215,7 +217,14 @@ type CheckRun struct {
 	// Name of the check run, e.g., "Baseline", "User", "ReadOnlyRootFilesystem", etc.
 	Name string `json:"name,omitempty"`
 	// Boolean flag indicating whether the check run was successful or not. A check is considered successful if the workload started and metrics and logs were recorded.
-	Success *bool `json:"success,omitempty"`
+	RecordingSuccessfull *bool `json:"recordingSuccessfull,omitempty"`
+	// Boolean flag indicating whether the check run was successful or not. A check is considered successful if the workload started and metrics and logs were recorded.
+	CheckSuccessfull *bool `json:"checkSuccessfull,omitempty"`
+	// SecurityContext which was applied for this check run.
+	SecurityContext *SecurityContextDefaults `json:"securityContext,omitempty"`
+	// FailureReason provides a reason for the failure of the check run, if applicable.
+	FailureReason string              `json:"failureReason,omitempty"`
+	Anomalies     map[string][]string `json:"anomalies,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -261,6 +270,11 @@ func (w *WorkloadHardeningCheck) AllChecksFinished() bool {
 
 	if !w.BaselineRecorded() {
 		return false // Baseline must be recorded before checks can be considered finished
+	}
+
+	if len(w.Status.CheckRuns) == 1 {
+		// If only the baseline check is present, we consider it not finished
+		return false
 	}
 
 	for _, condition := range w.Status.Conditions {

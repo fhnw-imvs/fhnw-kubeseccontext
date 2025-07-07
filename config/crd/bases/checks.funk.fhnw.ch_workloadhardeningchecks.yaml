@@ -178,15 +178,109 @@ spec:
                   description: CheckRun represents the result of a single check run
                     within a WorkloadHardeningCheck.
                   properties:
-                    name:
-                      description: Name of the check run, e.g., "Baseline", "User",
-                        "ReadOnlyRootFilesystem", etc.
-                      type: string
-                    success:
+                    anomalies:
+                      additionalProperties:
+                        items:
+                          type: string
+                        type: array
+                      type: object
+                    checkSuccessfull:
                       description: Boolean flag indicating whether the check run was
                         successful or not. A check is considered successful if the
                         workload started and metrics and logs were recorded.
                       type: boolean
+                    failureReason:
+                      description: FailureReason provides a reason for the failure
+                        of the check run, if applicable.
+                      type: string
+                    name:
+                      description: Name of the check run, e.g., "Baseline", "User",
+                        "ReadOnlyRootFilesystem", etc.
+                      type: string
+                    recordingSuccessfull:
+                      description: Boolean flag indicating whether the check run was
+                        successful or not. A check is considered successful if the
+                        workload started and metrics and logs were recorded.
+                      type: boolean
+                    securityContext:
+                      description: SecurityContext which was applied for this check
+                        run.
+                      properties:
+                        container:
+                          description: Set the values for container securityContext
+                            fields. These values will be used in all checks, and only
+                            fields not specified here will be checked dynamically.
+                          properties:
+                            allowPrivilegeEscalation:
+                              type: boolean
+                            capabilitiesDrop:
+                              items:
+                                type: string
+                              type: array
+                            readOnlyRootFilesystem:
+                              type: boolean
+                            runAsGroup:
+                              format: int64
+                              type: integer
+                            runAsNonRoot:
+                              type: boolean
+                            runAsUser:
+                              format: int64
+                              type: integer
+                            seccompProfile:
+                              description: SeccompProfile specifies the seccomp profile
+                                type.
+                              properties:
+                                type:
+                                  description: 'Type of seccomp profile. Allowed values:
+                                    RuntimeDefault, Localhost, Unconfined.'
+                                  enum:
+                                  - RuntimeDefault
+                                  - Localhost
+                                  - Unconfined
+                                  type: string
+                              required:
+                              - type
+                              type: object
+                          type: object
+                        pod:
+                          description: Set the values for pod securityContext fields.
+                            These values will be used in all checks, and only fields
+                            not specified here will be checked dynamically.
+                          properties:
+                            fsGroup:
+                              format: int64
+                              type: integer
+                            runAsGroup:
+                              format: int64
+                              type: integer
+                            runAsNonRoot:
+                              type: boolean
+                            runAsUser:
+                              format: int64
+                              type: integer
+                            seccompProfile:
+                              description: SeccompProfile type (e.g., RuntimeDefault,
+                                Localhost, Unconfined).
+                              properties:
+                                type:
+                                  description: 'Type of seccomp profile. Allowed values:
+                                    RuntimeDefault, Localhost, Unconfined.'
+                                  enum:
+                                  - RuntimeDefault
+                                  - Localhost
+                                  - Unconfined
+                                  type: string
+                              required:
+                              - type
+                              type: object
+                            supplementalGroups:
+                              items:
+                                format: int64
+                                type: integer
+                              type: array
+                          type: object
+                      type: object
                   type: object
                 type: array
               conditions:
