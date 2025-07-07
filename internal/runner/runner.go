@@ -18,19 +18,24 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/utils/ptr"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type CheckRunner struct {
 	client.Client
-	*wh.WorkloadCheckHandler
+	checkHandler *wh.WorkloadCheckHandler
+
+	scheme *runtime.Scheme
 
 	valKeyClient *valkey.ValkeyClient
-	l            logr.Logger
+	logger       logr.Logger
 	recorder     record.EventRecorder
 
 	workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck
@@ -41,22 +46,40 @@ type CheckRunner struct {
 // Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
 var titleCase = cases.Title(language.English)
 
-func NewCheckRunner(ctx context.Context, client client.Client, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
+func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
 
 	conditionTYpe := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
-	if checkType == "baseline" {
+	if strings.Contains(checkType, "baseline") {
 		conditionTYpe = checksv1alpha1.ConditionTypeBaseline
 	}
 
+	scheme := runtime.NewScheme()
+
+	clientgoscheme.AddToScheme(scheme)
+	checksv1alpha1.AddToScheme(scheme)
+
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to get Kubernetes config")
+		return nil
+	}
+
+	cl, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		log.FromContext(ctx).Error(err, "failed to create Kubernetes client")
+		return nil
+	}
+
 	return &CheckRunner{
-		Client:                 client,
-		l:                      log.FromContext(ctx).WithName("WorkloadHandler"),
+		Client:                 cl,
+		checkHandler:           wh.NewWorkloadCheckHandler(ctx, valKeyClient, workloadHardeningCheck),
+		logger:                 log.FromContext(ctx).WithName("WorkloadHandler"),
 		valKeyClient:           valKeyClient,
 		recorder:               recorder,
-		WorkloadCheckHandler:   wh.NewWorkloadCheckHandler(ctx, valKeyClient, client, workloadHardeningCheck),
 		workloadHardeningCheck: workloadHardeningCheck,
 		checkType:              checkType,
 		conditionType:          conditionTYpe,
+		scheme:                 scheme,
 	}
 
 }
@@ -67,7 +90,8 @@ func (r *CheckRunner) generateTargetNamespaceName() string {
 	if len(base) > 200 {
 		base = base[:200]
 	}
-	return fmt.Sprintf("%s-%s-%s", base, r.workloadHardeningCheck.Spec.Suffix, r.checkType)
+
+	return strings.ToLower(fmt.Sprintf("%s-%s-%s", base, r.workloadHardeningCheck.Spec.Suffix, r.checkType))
 }
 
 func (r *CheckRunner) namespaceExists(ctx context.Context, namespaceName string) bool {
@@ -104,11 +128,11 @@ func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
 
 	// ToDo: Reactivate!
 	// Set the owner reference of the cloned namespace to the workload hardening check
-	// err = ctrl.SetControllerReference(
-	// 	workloadHardening,
-	// 	targetNs,
-	// 	r.Scheme,
-	// )
+	err = ctrl.SetControllerReference(
+		r.workloadHardeningCheck,
+		targetNs,
+		r.scheme,
+	)
 
 	if err != nil {
 		log.Error(err, "failed to set controller reference for target namespace")
@@ -142,11 +166,11 @@ func (r *CheckRunner) deleteCheckNamespace(ctx context.Context) error {
 
 func (r *CheckRunner) setStatusFailed(ctx context.Context, message string) {
 	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFailed
-	if r.checkType == "baseline" {
+	if strings.Contains(r.checkType, "baseline") {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
 	}
 
-	r.SetCondition(ctx, metav1.Condition{
+	r.checkHandler.SetCondition(ctx, metav1.Condition{
 		Type:    r.conditionType,
 		Status:  metav1.ConditionUnknown,
 		Reason:  conditionReason,
@@ -157,40 +181,54 @@ func (r *CheckRunner) setStatusFailed(ctx context.Context, message string) {
 
 func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, securityContext *checksv1alpha1.SecurityContextDefaults) {
 	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFinished
-	if r.checkType == "baseline" {
+	if strings.Contains(r.checkType, "baseline") {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFinished
 	}
 
-	r.SetCondition(ctx, metav1.Condition{
+	r.checkHandler.SetCondition(ctx, metav1.Condition{
 		Type:    r.conditionType,
 		Status:  metav1.ConditionTrue,
 		Reason:  conditionReason,
 		Message: message,
 	})
 
-	r.workloadHardeningCheck.Status.CheckRuns = append(r.workloadHardeningCheck.Status.CheckRuns, checksv1alpha1.CheckRun{
-		Name:                 r.checkType,
-		RecordingSuccessfull: ptr.To(true),
-		SecurityContext:      securityContext,
-	})
+	retryCount := 0
+	// retry 3 times to update the status of the WorkloadHardeningCheck, to avoid concurrent updates failing
+	for retryCount < 3 {
+		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
+		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
+			log.FromContext(ctx).Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+		}
 
-	err := r.Status().Update(ctx, r.workloadHardeningCheck)
-	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to add check run to workload hardening check status",
-			"checkType", r.checkType,
-			"namespace", r.workloadHardeningCheck.Namespace,
-			"name", r.workloadHardeningCheck.Name,
-		)
+		// Set/Update condition
+		r.workloadHardeningCheck.Status.CheckRuns = append(r.workloadHardeningCheck.Status.CheckRuns, checksv1alpha1.CheckRun{
+			Name:                 r.checkType,
+			RecordingSuccessfull: ptr.To(true),
+			SecurityContext:      securityContext,
+		})
+
+		if err := r.Status().Update(ctx, r.workloadHardeningCheck); err != nil {
+			log.FromContext(ctx).Error(err, "failed to add check run to workload hardening check status",
+				"checkType", r.checkType,
+				"namespace", r.workloadHardeningCheck.Namespace,
+				"name", r.workloadHardeningCheck.Name,
+			)
+			retryCount++
+			continue // Retry updating the status
+		} else {
+			break
+		}
+
 	}
 }
 
 func (r *CheckRunner) setStatusRunning(ctx context.Context, message string) {
 	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecording
-	if r.checkType == "baseline" {
+	if strings.Contains(r.checkType, "baseline") {
 		conditionReason = checksv1alpha1.ReasonBaselineRecording
 	}
 
-	r.SetCondition(ctx, metav1.Condition{
+	r.checkHandler.SetCondition(ctx, metav1.Condition{
 		Type:    r.conditionType,
 		Status:  metav1.ConditionFalse,
 		Reason:  conditionReason,
@@ -236,7 +274,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	r.setStatusRunning(ctx, "Starting recording signals")
 
 	// Fetch the workload we want to test, make sure we fetch it from the target namespace
-	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, targetNamespaceName)
+	workloadUnderTest, err := r.checkHandler.GetWorkloadUnderTest(ctx, targetNamespaceName)
 	if err != nil {
 		log.Error(err, "failed to get workload under test",
 			"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
@@ -416,7 +454,7 @@ func (r *CheckRunner) RecordMetrics(ctx context.Context) ([]recording.ResourceUs
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 	)
 
-	labelSelector, err := r.GetLabelSelector(ctx)
+	labelSelector, err := r.checkHandler.GetLabelSelector(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -467,7 +505,7 @@ func (r *CheckRunner) RecordMetrics(ctx context.Context) ([]recording.ResourceUs
 	// Initialize the channels with the expected capacity to avoid blocking
 	metricsChannel := make(chan *recording.RecordedMetrics, len(pods.Items))
 
-	checkDurationSeconds := int(r.workloadHardeningCheck.GetCheckDuration().Seconds())
+	checkDurationSeconds := int(r.checkHandler.GetCheckDuration().Seconds())
 
 	for _, pod := range pods.Items {
 		go func() {
@@ -516,7 +554,7 @@ func (r *CheckRunner) RecordLogs(ctx context.Context) (map[string][]string, erro
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 	)
 
-	labelSelector, err := r.GetLabelSelector(ctx)
+	labelSelector, err := r.checkHandler.GetLabelSelector(ctx)
 	if err != nil {
 		return nil, err
 	}

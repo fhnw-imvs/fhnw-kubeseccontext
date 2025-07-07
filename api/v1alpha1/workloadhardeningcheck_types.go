@@ -17,11 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
-	"strings"
-	"time"
-
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -240,53 +236,6 @@ type WorkloadHardeningCheck struct {
 
 	Spec   WorkloadHardeningCheckSpec   `json:"spec,omitempty"`
 	Status WorkloadHardeningCheckStatus `json:"status,omitempty"`
-}
-
-func (w *WorkloadHardeningCheck) GetCheckDuration() time.Duration {
-	// Default to 5 minutes if not specified
-	if w.Spec.BaselineDuration == "" {
-		return 5 * time.Minute
-	}
-
-	// Parse the duration string
-	duration, err := time.ParseDuration(w.Spec.BaselineDuration)
-	if err != nil {
-		return 5 * time.Minute // Fallback to default if parsing fails
-	}
-
-	return duration
-}
-
-func (w *WorkloadHardeningCheck) BaselineRecorded() bool {
-
-	if meta.IsStatusConditionTrue(w.Status.Conditions, ConditionTypeBaseline) {
-		condition := meta.FindStatusCondition(w.Status.Conditions, ConditionTypeBaseline)
-		return condition.Reason == ReasonBaselineRecordingFinished
-	}
-	return false
-}
-
-func (w *WorkloadHardeningCheck) AllChecksFinished() bool {
-
-	if !w.BaselineRecorded() {
-		return false // Baseline must be recorded before checks can be considered finished
-	}
-
-	if len(w.Status.CheckRuns) == 1 {
-		// If only the baseline check is present, we consider it not finished
-		return false
-	}
-
-	for _, condition := range w.Status.Conditions {
-		if strings.Contains(condition.Type, ConditionTypeCheck) {
-			if condition.Reason == ReasonCheckRecording {
-				return false // At least one check is still running
-			}
-		}
-	}
-
-	// If we reach here, it means no checks are running
-	return true
 }
 
 // +kubebuilder:object:root=true

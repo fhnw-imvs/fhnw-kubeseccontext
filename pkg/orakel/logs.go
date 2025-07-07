@@ -15,11 +15,9 @@ type LogOrakel struct {
 	Anomalies []string
 }
 
-func NewDrainMiner(delimiters []string) *LogOrakel {
+func NewDrainMiner() *LogOrakel {
 	drainConfig := drain.DefaultConfig()
-	if delimiters != nil {
-		drainConfig.ExtraDelimiters = delimiters
-	}
+
 	return &LogOrakel{
 		Drain: drain.New(drainConfig),
 	}

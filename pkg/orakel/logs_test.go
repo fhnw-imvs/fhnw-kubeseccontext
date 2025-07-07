@@ -8,13 +8,13 @@ import (
 
 func TestLogOrakel_LoadBaseline(t *testing.T) {
 	t.Run("LoadBaseline with empty input", func(t *testing.T) {
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		count := dm.LoadBaseline([]string{})
 		assert.Equal(t, 0, count, "Expected baseline logs count to be 0")
 	})
 
 	t.Run("LoadBaseline with valid input", func(t *testing.T) {
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		input := []string{"log line 1", "log line 2", "log line 3"}
 		count := dm.LoadBaseline(input)
 		assert.Equal(t, 3, count, "Expected baseline logs count to be 3")
@@ -22,7 +22,7 @@ func TestLogOrakel_LoadBaseline(t *testing.T) {
 	})
 
 	t.Run("LoadBaseline with duplicate lines", func(t *testing.T) {
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		input := []string{"log line 1", "log line 1", "log line 2"}
 		count := dm.LoadBaseline(input)
 		assert.Equal(t, 3, count, "Expected baseline logs count to be 3")
@@ -33,14 +33,14 @@ func TestLogOrakel_LoadBaseline(t *testing.T) {
 func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 
 	t.Run("AnalyzeLogs with empty input", func(t *testing.T) {
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		result, count := dm.AnalyzeTarget([]string{})
 		assert.Equal(t, 0, len(result), "Expected no anomalies for empty input")
 		assert.Equal(t, 0, count, "Excpected target line count to be 0")
 	})
 
 	t.Run("AnalyzeLogs with valid input", func(t *testing.T) {
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		input := []string{"log line 1", "log line 2", "log line 3"}
 		result, count := dm.AnalyzeTarget(input)
 		assert.Equal(t, 3, len(result), "Expected no anomalies for baseline logs")
@@ -48,7 +48,7 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 	})
 
 	t.Run("AnalyzeLogs without anomalies but matches", func(t *testing.T) {
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		dm.LoadBaseline([]string{"log line 1", "log line 2"})
 		input := []string{"log line 5", "log line 6"} // log lines don't contain the same value, but should match an existing cluster
 		result, count := dm.AnalyzeTarget(input)
@@ -57,7 +57,7 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 	})
 
 	t.Run("AnalyzeLogs with identical baseline/target", func(t *testing.T) {
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		baselineLogs := []string{
 			"ts=2025-07-07T13:59:39.37824263Z level=info caller=/workspace/cmd/prometheus-config-reloader/main.go:148 msg=\"Starting prometheus-config-reloader\" version=\"(version=0.83.0, branch=, revision=5cf2f5d)\" build_context=\"(go=go1.24.3, platform=linux/amd64, user=, date=20250530-07: 46: 40, tags=unknown)\"",
 			"ts=2025-07-07T13:59:39.378453637Z level=info caller=/workspace/internal/goruntime/cpu.go:27 msg=\"Leaving GOMAXPROCS=12: CPU quota undefined\"",
@@ -74,7 +74,7 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 	})
 
 	t.Run("AnalyzeLogs with identical baseline/target", func(t *testing.T) {
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		baselineLogs := []string{
 			"ts=2025-07-07T13:59:39.37824263Z level=info caller=/workspace/cmd/prometheus-config-reloader/main.go:148 msg=\"Starting prometheus-config-reloader\" version=\"(version=0.83.0, branch=, revision=5cf2f5d)\" build_context=\"(go=go1.24.3, platform=linux/amd64, user=, date=20250530-07: 46: 40, tags=unknown)\"",
 			"ts=2025-07-07T13:59:39.378453637Z level=info caller=/workspace/internal/goruntime/cpu.go:27 msg=\"Leaving GOMAXPROCS=12: CPU quota undefined\"",
@@ -155,7 +155,7 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 			"time=2025-07-07T14:49:19.918Z level=INFO source=warnings.go:70 msg=\"v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice\" component=k8s_client_runtime",
 		}
 
-		dm := NewDrainMiner(nil)
+		dm := NewDrainMiner()
 		dm.LoadBaseline(baselineLogs)
 		targetLogs := []string{
 			"time=2025-07-07T13:59:39.488Z level=INFO source=main.go:725 msg=\"Starting Prometheus Server\" mode=server version=\"(version=3.4.2, branch=HEAD, revision=b392caf256d7ed36980992496c8a6274e5557d36)\"",
