@@ -6,7 +6,7 @@ import (
 	"github.com/faceair/drain"
 )
 
-type DrainMiner struct {
+type LogOrakel struct {
 	*drain.Drain
 
 	BaselineLogsCount int
@@ -15,7 +15,7 @@ type DrainMiner struct {
 	Anomalies []string
 }
 
-func NewDrainMiner(delimiters []string) *DrainMiner {
+func NewDrainMiner(delimiters []string) *LogOrakel {
 	drainConfig := drain.DefaultConfig()
 	if delimiters != nil {
 		drainConfig.ExtraDelimiters = delimiters
@@ -23,13 +23,13 @@ func NewDrainMiner(delimiters []string) *DrainMiner {
 		drainConfig.ExtraDelimiters = []string{"\t", " ", ",", ";", ":", "=", "(", ")", "{", "}", "[", "]", "\"", "'", "|", "\\", "/", "!", "?"}
 	}
 
-	return &DrainMiner{
+	return &LogOrakel{
 		Drain: drain.New(drainConfig),
 	}
 
 }
 
-func (dm *DrainMiner) LoadBaseline(input []string) int {
+func (dm *LogOrakel) LoadBaseline(input []string) int {
 
 	for _, line := range input {
 		if strings.TrimSpace(line) == "" {
@@ -42,7 +42,7 @@ func (dm *DrainMiner) LoadBaseline(input []string) int {
 	return dm.BaselineLogsCount
 }
 
-func (dm *DrainMiner) AnalyzeTarget(input []string) ([]string, int) {
+func (dm *LogOrakel) AnalyzeTarget(input []string) ([]string, int) {
 	dm.TargetLogCount = 0
 	dm.Anomalies = []string{}
 

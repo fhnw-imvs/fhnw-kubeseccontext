@@ -172,7 +172,7 @@ func (r *WorkloadHandler) AnalyzeCheckRuns(ctx context.Context) error {
 	}
 
 	// Contains a drainMiner for each container in the baseline recording
-	drainMinerPerContainer := make(map[string]*orakel.DrainMiner, len(baselineRecording.Logs))
+	drainMinerPerContainer := make(map[string]*orakel.LogOrakel, len(baselineRecording.Logs))
 
 	for podName, logs := range baselineRecording.Logs {
 		// Initialize a DrainMiner for each pod
