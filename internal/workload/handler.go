@@ -323,7 +323,7 @@ func (r *WorkloadCheckHandler) SetRecommendation(ctx context.Context) error {
 		}
 		// Set/Update the recommendation
 
-		r.workloadHardeningCheck.Status.Recommendation = checksv1alpha1.Recommendation{
+		r.workloadHardeningCheck.Status.Recommendation = &checksv1alpha1.Recommendation{
 			ContainerSecurityContexts: containerSecurityContext,
 			PodSecurityContext:        podSecurityContext,
 		}
