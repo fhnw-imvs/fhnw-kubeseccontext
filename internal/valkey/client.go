@@ -43,7 +43,7 @@ func (v *ValkeyClient) storeEntry(ctx context.Context, key string, value string)
 
 func (v *ValkeyClient) getEntry(ctx context.Context, key string) (string, error) {
 
-	res, err := v.Do(ctx, v.B().Get().Key(strings.ToLower(key)).Build()).AsStrSlice()
+	res, err := v.Do(ctx, v.B().Get().Key(strings.ToLower(key)).Build()).AsBytes()
 	if err != nil {
 		return "", err
 	}
@@ -51,7 +51,7 @@ func (v *ValkeyClient) getEntry(ctx context.Context, key string) (string, error)
 	if len(res) == 0 {
 		return "", nil // No entry found for the given key
 	}
-	return res[0], nil
+	return string(res), nil
 }
 
 func (v ValkeyClient) deleteEntry(ctx context.Context, key string) error {

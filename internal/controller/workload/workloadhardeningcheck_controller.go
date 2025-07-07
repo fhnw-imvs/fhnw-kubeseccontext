@@ -41,6 +41,7 @@ import (
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
 )
 
 // WorkloadHardeningCheckReconciler reconciles a WorkloadHardeningCheck object
@@ -135,9 +136,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	// Based on the Status, we need to decide what to do next
 	// If there is no Baseline recorded yet, we need to start the baseline recording
 
-	if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
-		log.Info("Baseline recorded. Start recording different security context configurations")
-	} else {
+	if !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
 		log.Info("Baseline not recorded yet. Starting baseline recording")
 		// Set the condition to indicate that we are starting the baseline recording
 
@@ -158,76 +157,108 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	// ToDo: Refactor & Move into runner package
 	podChecks := []string{"group", "user"}
 
-	if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
-		log.Info("Running checks in parallel mode")
-		// Run all checks in parallel
-		for _, checkType := range podChecks {
+	if !workloadHardening.AllChecksFinished() {
+		log.Info("Not all checks are finished, running checks")
+		if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
+			log.Info("Running checks in parallel mode")
+			// Run all checks in parallel
+			for _, checkType := range podChecks {
 
-			if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
-				log.Info("Check already finished, skipping", "checkType", checkType)
-				continue // Skip if the check is already recorded
+				if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
+					log.V(2).Info("Check already finished, skipping", "checkType", checkType)
+					continue // Skip if the check is already recorded
+				}
+
+				if meta.IsStatusConditionFalse(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
+					log.V(2).Info("Check still running, skipping", "checkType", checkType)
+					continue // Skip if the check is already recorded
+				}
+
+				securityContext := workloadHardening.Spec.SecurityContext.DeepCopy()
+				if securityContext == nil {
+					securityContext = &checksv1alpha1.SecurityContextDefaults{
+						Pod:       &checksv1alpha1.PodSecurityContextDefaults{},
+						Container: &checksv1alpha1.ContainerSecurityContextDefaults{},
+					}
+				}
+
+				if checkType == "user" {
+					if securityContext.Pod.RunAsUser == nil {
+						securityContext.Pod.RunAsUser = ptr.To(int64(10000))
+					}
+					if securityContext.Pod.RunAsNonRoot == nil {
+						securityContext.Pod.RunAsNonRoot = ptr.To(true)
+					}
+
+					if securityContext.Container.RunAsUser == nil {
+						securityContext.Container.RunAsUser = ptr.To(int64(10000))
+					}
+					if securityContext.Container.RunAsNonRoot == nil {
+						securityContext.Container.RunAsNonRoot = ptr.To(true)
+					}
+				}
+
+				if checkType == "group" {
+					if securityContext.Pod.RunAsGroup == nil {
+						securityContext.Pod.RunAsGroup = ptr.To(int64(10000))
+					}
+					if securityContext.Pod.FSGroup == nil {
+						securityContext.Pod.FSGroup = ptr.To(int64(10000))
+					}
+
+					if securityContext.Container.RunAsGroup == nil {
+						securityContext.Container.RunAsGroup = ptr.To(int64(10000))
+					}
+				}
+
+				runner := runner.NewCheckRunner(ctx, r.Client, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
+
+				go runner.RunCheck(ctx, securityContext)
 			}
 
-			if meta.IsStatusConditionFalse(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
-				log.Info("Check still running, skipping", "checkType", checkType)
-				continue // Skip if the check is already recorded
-			}
+			// Requeue the reconciliation after the baseline duration, to continue with the next steps
+			return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
+		} else {
+			log.Info("Running checks in sequential mode")
+			// ToDo: How to determnine the order of checks? Which ones are already done?
+		}
+	}
+	handler := workload.NewWorkloadCheckHandler(ctx, r.ValKeyClient, r.Client, workloadHardening)
 
-			securityContext := workloadHardening.Spec.SecurityContext.DeepCopy()
-			if securityContext == nil {
-				securityContext = &checksv1alpha1.SecurityContextDefaults{
-					Pod:       &checksv1alpha1.PodSecurityContextDefaults{},
-					Container: &checksv1alpha1.ContainerSecurityContextDefaults{},
-				}
-			}
+	if !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeAnalysis) && workloadHardening.AllChecksFinished() {
 
-			if checkType == "user" {
-				if securityContext.Pod.RunAsUser == nil {
-					securityContext.Pod.RunAsUser = ptr.To(int64(10000))
-				}
-				if securityContext.Pod.RunAsNonRoot == nil {
-					securityContext.Pod.RunAsNonRoot = ptr.To(true)
-				}
+		log.Info("All checks are finished, analyzing results")
+		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    checksv1alpha1.ConditionTypeAnalysis,
+			Status:  metav1.ConditionFalse,
+			Reason:  "Analyzing",
+			Message: "Check runs are beeing analyzed",
+		})
 
-				if securityContext.Container.RunAsUser == nil {
-					securityContext.Container.RunAsUser = ptr.To(int64(10000))
-				}
-				if securityContext.Container.RunAsNonRoot == nil {
-					securityContext.Container.RunAsNonRoot = ptr.To(true)
-				}
-			}
-
-			if checkType == "group" {
-				if securityContext.Pod.RunAsGroup == nil {
-					securityContext.Pod.RunAsGroup = ptr.To(int64(10000))
-				}
-				if securityContext.Pod.FSGroup == nil {
-					securityContext.Pod.FSGroup = ptr.To(int64(10000))
-				}
-
-				if securityContext.Container.RunAsGroup == nil {
-					securityContext.Container.RunAsGroup = ptr.To(int64(10000))
-				}
-			}
-
-			runner := runner.NewCheckRunner(ctx, r.Client, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
-
-			go runner.RunCheck(ctx, securityContext)
+		err = handler.AnalyzeCheckRuns(ctx)
+		if err != nil {
+			log.Error(err, "Failed to analyze check runs")
+			err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+				Type:    checksv1alpha1.ConditionTypeAnalysis,
+				Status:  metav1.ConditionFalse,
+				Reason:  "AnalyzeFailed",
+				Message: "Error analyzing check runs",
+			})
+			return ctrl.Result{}, nil
 		}
 
-		// Requeue the reconciliation after the baseline duration, to continue with the next steps
-		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
-	} else {
-		log.Info("Running checks in sequential mode")
-		// ToDo: How to determnine the order of checks? Which ones are already done?
+		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+			Type:    checksv1alpha1.ConditionTypeAnalysis,
+			Status:  metav1.ConditionTrue,
+			Reason:  "Analyzed",
+			Message: "Check runs are analyzed",
+		})
+
 	}
 
 	// If all checks are done, we can now analyze the recorded signals
-	// ToDo: Implement log comparison between checks and baseline
-	// ToDo: Use metrics if feasible to support the findings from the logs
-	// ToDo: Write the results to the status of the WorkloadHardeningCheck
+	// ToDo: Write the results to the status of the WorkloadHardeningCheck / Generate recommendations
 
-	// Refactor into a go routine, and check for status updates
 	return ctrl.Result{}, nil
 }
 
