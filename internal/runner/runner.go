@@ -323,7 +323,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	r.setConditionRunning(ctx, "Recording signals")
 
 	// start recording metrics for target workload
-	workloadRecording, err := r.RecordSignals(ctx)
+	recordedMetrics, err := r.RecordMetrics(ctx)
 
 	if err != nil {
 		log.Error(err, "failed to record signals")
@@ -333,13 +333,31 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		return
 	}
 
+	workloadRecording := recording.WorkloadRecording{
+		Type:      r.checkType,
+		Success:   true,
+		StartTime: startTime,
+		EndTime:   metav1.Now(),
+
+		RecordedMetrics: recordedMetrics,
+	}
+
 	workloadRecording.SecurityContextConfigurations = securityContext
+
+	// Record logs for the workload
+	logs, err := r.RecordLogs(ctx)
+	if err != nil {
+		log.Error(err, "failed to record logs")
+		r.setConditionFailed(ctx, "Failed to record logs")
+		return
+	}
+	workloadRecording.Logs = logs
 
 	err = r.valKeyClient.StoreRecording(
 		ctx,
 		// prefix with original namespace to avoid conflict if suffix is reused
 		r.workloadHardeningCheck.GetNamespace()+":"+r.workloadHardeningCheck.Spec.Suffix,
-		workloadRecording,
+		&workloadRecording,
 	)
 
 	if err != nil {
@@ -374,7 +392,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	}
 }
 
-func (r *CheckRunner) RecordSignals(ctx context.Context) (*recording.WorkloadRecording, error) {
+func (r *CheckRunner) RecordMetrics(ctx context.Context) ([]recording.ResourceUsageRecord, error) {
 	targetNamespace := r.generateTargetNamespaceName()
 	log := log.FromContext(ctx).WithValues(
 		"targetNamespace", targetNamespace,
@@ -432,10 +450,6 @@ func (r *CheckRunner) RecordSignals(ctx context.Context) (*recording.WorkloadRec
 
 	// Initialize the channels with the expected capacity to avoid blocking
 	metricsChannel := make(chan *recording.RecordedMetrics, len(pods.Items))
-	// As we collect logs per container, we need to multiply the number of pods with the number of containers in each pod
-	logsChannel := make(chan string, len(pods.Items)*len(pods.Items[0].Spec.Containers))
-
-	startTime := metav1.Now()
 
 	checkDurationSeconds := int(r.workloadHardeningCheck.GetCheckDuration().Seconds())
 
@@ -454,27 +468,6 @@ func (r *CheckRunner) RecordSignals(ctx context.Context) (*recording.WorkloadRec
 
 			metricsChannel <- recordedMetrics
 
-			// The logs are collected per container in the pod
-			for _, container := range pod.Spec.Containers {
-
-				logs, err := GetLogs(ctx, &pod, container.Name)
-				if err != nil {
-					log.Error(
-						err,
-						"error fetching logs",
-						"podName", pod.Name,
-						"containerName", container.Name,
-					)
-				} else {
-					log.V(1).Info(
-						"fetched logs",
-						"podName", pod.Name,
-						"containerName", container.Name,
-					)
-				}
-				logsChannel <- logs
-			}
-
 			wg.Done()
 
 		}()
@@ -484,7 +477,6 @@ func (r *CheckRunner) RecordSignals(ctx context.Context) (*recording.WorkloadRec
 
 	// close channels so that the range loops will stop
 	close(metricsChannel)
-	close(logsChannel)
 
 	resourceUsageRecords := []recording.ResourceUsageRecord{}
 	for result := range metricsChannel {
@@ -497,21 +489,130 @@ func (r *CheckRunner) RecordSignals(ctx context.Context) (*recording.WorkloadRec
 		log.Info("no resource usage records found, nothing to store")
 	}
 
-	logs := []string{}
-	for podLogs := range logsChannel {
-		logs = append(logs, strings.Split(podLogs, "\n")...)
+	return resourceUsageRecords, nil
+}
+
+func (r *CheckRunner) RecordLogs(ctx context.Context) (map[string][]string, error) {
+	targetNamespace := r.generateTargetNamespaceName()
+	log := log.FromContext(ctx).WithValues(
+		"targetNamespace", targetNamespace,
+		"checkType", r.checkType,
+		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
+	)
+
+	labelSelector, err := r.GetLabelSelector(ctx)
+	if err != nil {
+		return nil, err
 	}
+
+	// get pods under observation, we use the label selector from the workload under test
+	// Shouldn't be necessary anymore, as this was mostly relevant to record metrics. We are only recording logs after the metrics have been recorded, so the pods should already be running.
+	// ToDo: Cleanup, only fetch the pods and then fetch their logs
+	pods := &corev1.PodList{}
+	for len(pods.Items) == 0 {
+		err = r.List(
+			ctx,
+			pods,
+			&client.ListOptions{
+				Namespace:     targetNamespace,
+				LabelSelector: labelSelector,
+			},
+		)
+		if err != nil {
+			log.Error(err, "error fetching pods")
+			return nil, err
+		}
+
+		// If the pods aren't assigned to a node, we cannot record metrics
+		if len(pods.Items) > 0 {
+			allAssigned := true
+			for _, pod := range pods.Items {
+				if pod.Spec.NodeName == "" {
+					allAssigned = false
+					break
+				}
+			}
+			if allAssigned {
+				break // All pods are assigned to a node, we can proceed
+			}
+			pods = &corev1.PodList{} // reset podList to retry fetching
+			log.Info("Pods are not assigned to a node yet, retrying")
+		}
+	}
+
+	log.Info(
+		"fetched pods matching workload under",
+		"numberOfPods", len(pods.Items),
+	)
+
+	var wg sync.WaitGroup
+	wg.Add(len(pods.Items))
+
+	logMap := make(map[string][]string, len(pods.Items)*(len(pods.Items[0].Spec.Containers)+len(pods.Items[0].Spec.InitContainers)))
+	mapMutex := &sync.Mutex{}
+
+	for _, pod := range pods.Items {
+		go func() {
+
+			// The logs are collected per container in the pod
+			for _, container := range pod.Spec.Containers {
+
+				containerLog, err := GetLogs(ctx, &pod, container.Name)
+				if err != nil {
+					log.Error(
+						err,
+						"error fetching logs",
+						"podName", pod.Name,
+						"containerName", container.Name,
+					)
+					continue
+				}
+
+				log.V(1).Info(
+					"fetched logs",
+					"podName", pod.Name,
+					"containerName", container.Name,
+				)
+
+				// Use a mutex to safely write to the map from multiple goroutines
+				mapMutex.Lock()
+				logMap[container.Name] = append(logMap[container.Name], strings.Split(containerLog, "\n")...)
+				mapMutex.Unlock()
+
+			}
+
+			for _, container := range pod.Spec.InitContainers {
+
+				containerLog, err := GetLogs(ctx, &pod, container.Name)
+				if err != nil {
+					log.Error(
+						err,
+						"error fetching logs",
+						"podName", pod.Name,
+						"containerName", container.Name,
+					)
+					continue
+				}
+				log.V(1).Info(
+					"fetched logs",
+					"podName", pod.Name,
+					"containerName", container.Name,
+				)
+
+				mapMutex.Lock()
+				logMap["init:"+container.Name] = append(logMap["init:"+container.Name], strings.Split(containerLog, "\n")...)
+				mapMutex.Unlock()
+
+			}
+
+			wg.Done()
+
+		}()
+	}
+
+	wg.Wait()
+
 	log.V(1).Info("collected logs")
 
-	workloadRecording := recording.WorkloadRecording{
-		Type:      r.checkType,
-		Success:   true,
-		StartTime: startTime,
-		EndTime:   metav1.Now(),
-
-		RecordedMetrics: resourceUsageRecords,
-		Logs:            logs,
-	}
-
-	return &workloadRecording, nil
+	return logMap, nil
 }
