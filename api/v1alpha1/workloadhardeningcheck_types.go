@@ -207,7 +207,7 @@ type WorkloadHardeningCheckStatus struct {
 	// Each check run corresponds to a specific security context configuration applied to the workload.
 	CheckRuns []CheckRun `json:"checkRuns,omitempty"`
 
-	Recommendation Recommendation `json:"recommendation,omitempty"`
+	Recommendation *Recommendation `json:"recommendation,omitempty"`
 }
 
 // CheckRun represents the result of a single check run within a WorkloadHardeningCheck.
