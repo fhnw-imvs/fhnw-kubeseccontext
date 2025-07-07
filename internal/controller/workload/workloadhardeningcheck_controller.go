@@ -30,7 +30,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
-	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -130,8 +129,9 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		}
 	}
 
+	handler := workload.NewWorkloadCheckHandler(ctx, r.ValKeyClient, workloadHardening)
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
-	duration := workloadHardening.GetCheckDuration()
+	duration := handler.GetCheckDuration()
 
 	// Based on the Status, we need to decide what to do next
 	// If there is no Baseline recorded yet, we need to start the baseline recording
@@ -140,10 +140,14 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		log.Info("Baseline not recorded yet. Starting baseline recording")
 		// Set the condition to indicate that we are starting the baseline recording
 
-		// Refactor to be reusable for other checks, than the baseline
-		runner := runner.NewCheckRunner(ctx, r.Client, r.ValKeyClient, r.Recorder, workloadHardening, "baseline")
+		baselineRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline")
+		go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
-		go runner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
+		// The baseline is recorded twice, to make the log matching better, as the logs are ingested using different timestamps
+
+		time.Sleep(10 * time.Second) // Sleep for a short duration to allow the first baseline recording to start
+		baselineRunner = runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline-2")
+		go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
 		// Requeue the reconciliation after the baseline duration, to continue with the next steps
 		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
@@ -155,14 +159,16 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	// ToDo: Define the neccessary checks to run, eg. user(runAsUser, runAsNonRoot), group(runAsGroup, fsGroup), roFs(readOnlyFilesystem), seccomp, etc.
 	// Does it make sense to first run a check with a fully hardened security context and only if that fails, run the more granular checks?
 	// ToDo: Refactor & Move into runner package
-	podChecks := []string{"group", "user"}
 
-	if !workloadHardening.AllChecksFinished() {
+	requiredChecks := handler.GetRequiredCheckRuns(ctx)
+
+	if len(requiredChecks) > 0 || !handler.AllChecksFinished() {
 		log.Info("Not all checks are finished, running checks")
+
 		if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
 			log.Info("Running checks in parallel mode")
 			// Run all checks in parallel
-			for _, checkType := range podChecks {
+			for _, checkType := range requiredChecks {
 
 				if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
 					log.V(2).Info("Check already finished, skipping", "checkType", checkType)
@@ -171,61 +177,60 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 				if meta.IsStatusConditionFalse(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
 					log.V(2).Info("Check still running, skipping", "checkType", checkType)
-					continue // Skip if the check is already recorded
+
+					condition := meta.FindStatusCondition(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
+					expiryTime := metav1.NewTime(time.Now().Add(-2 * duration))
+					if condition.LastTransitionTime.Before(&expiryTime) {
+						log.V(2).Info("Check still running, but last transition time is older than 2x duration, requeuing", "checkType", checkType)
+						r.setCondition(ctx, workloadHardening, metav1.Condition{
+							Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
+							Status:  metav1.ConditionUnknown,
+							Reason:  "Requeuing",
+							Message: "Check is still running, but last transition time is older than 2x duration, requeuing",
+						})
+
+					} else {
+						continue // Skip if the check might still be running
+					}
+
 				}
 
-				securityContext := workloadHardening.Spec.SecurityContext.DeepCopy()
-				if securityContext == nil {
-					securityContext = &checksv1alpha1.SecurityContextDefaults{
-						Pod:       &checksv1alpha1.PodSecurityContextDefaults{},
-						Container: &checksv1alpha1.ContainerSecurityContextDefaults{},
-					}
-				}
+				securityContext := handler.GetSecurityContextForCheckType(checkType)
 
-				if checkType == "user" {
-					if securityContext.Pod.RunAsUser == nil {
-						securityContext.Pod.RunAsUser = ptr.To(int64(10000))
-					}
-					if securityContext.Pod.RunAsNonRoot == nil {
-						securityContext.Pod.RunAsNonRoot = ptr.To(true)
-					}
+				checkRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
 
-					if securityContext.Container.RunAsUser == nil {
-						securityContext.Container.RunAsUser = ptr.To(int64(10000))
-					}
-					if securityContext.Container.RunAsNonRoot == nil {
-						securityContext.Container.RunAsNonRoot = ptr.To(true)
-					}
-				}
-
-				if checkType == "group" {
-					if securityContext.Pod.RunAsGroup == nil {
-						securityContext.Pod.RunAsGroup = ptr.To(int64(10000))
-					}
-					if securityContext.Pod.FSGroup == nil {
-						securityContext.Pod.FSGroup = ptr.To(int64(10000))
-					}
-
-					if securityContext.Container.RunAsGroup == nil {
-						securityContext.Container.RunAsGroup = ptr.To(int64(10000))
-					}
-				}
-
-				runner := runner.NewCheckRunner(ctx, r.Client, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
-
-				go runner.RunCheck(ctx, securityContext)
+				go checkRunner.RunCheck(ctx, securityContext)
 			}
 
 			// Requeue the reconciliation after the baseline duration, to continue with the next steps
 			return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
 		} else {
 			log.Info("Running checks in sequential mode")
+
+			for _, checkType := range requiredChecks {
+				if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
+					log.V(2).Info("Check already finished, skipping", "checkType", checkType)
+					continue // Skip if the check is already recorded
+				}
+				if meta.IsStatusConditionFalse(workloadHardening.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
+					log.V(2).Info("Check still running, skipping", "checkType", checkType)
+					continue // Skip if the check is already recorded
+				}
+
+				securityContext := handler.GetSecurityContextForCheckType(checkType)
+				checkRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
+				log.Info("Running check", "checkType", checkType)
+				go checkRunner.RunCheck(ctx, securityContext)
+
+				// Requeue the reconciliation after the  duration, to continue with the next check
+				return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
+			}
+
 			// ToDo: How to determnine the order of checks? Which ones are already done?
 		}
 	}
-	handler := workload.NewWorkloadCheckHandler(ctx, r.ValKeyClient, r.Client, workloadHardening)
 
-	if !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeAnalysis) && workloadHardening.AllChecksFinished() {
+	if !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeAnalysis) && handler.AllChecksFinished() {
 
 		log.Info("All checks are finished, analyzing results")
 		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
