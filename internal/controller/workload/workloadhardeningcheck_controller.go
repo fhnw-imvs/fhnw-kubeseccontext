@@ -28,7 +28,6 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -115,10 +114,12 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
+	handler := workload.NewWorkloadCheckHandler(ctx, r.ValKeyClient, workloadHardening)
+
 	// Let's just set the status as Unknown when no status is available
 	if len(workloadHardening.Status.Conditions) == 0 {
 
-		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+		err = handler.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypePreparation,
 			Status:  metav1.ConditionUnknown,
 			Reason:  "Verifying",
@@ -129,7 +130,6 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		}
 	}
 
-	handler := workload.NewWorkloadCheckHandler(ctx, r.ValKeyClient, workloadHardening)
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
 	duration := handler.GetCheckDuration()
 
@@ -182,7 +182,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 					expiryTime := metav1.NewTime(time.Now().Add(-2 * duration))
 					if condition.LastTransitionTime.Before(&expiryTime) {
 						log.V(2).Info("Check still running, but last transition time is older than 2x duration, requeuing", "checkType", checkType)
-						r.setCondition(ctx, workloadHardening, metav1.Condition{
+						handler.SetCondition(ctx, metav1.Condition{
 							Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
 							Status:  metav1.ConditionUnknown,
 							Reason:  "Requeuing",
@@ -219,7 +219,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 					expiryTime := metav1.NewTime(time.Now().Add(-2 * duration))
 					if condition.LastTransitionTime.Before(&expiryTime) {
 						log.V(2).Info("Check still running, but last transition time is older than 2x duration, requeuing", "checkType", checkType)
-						r.setCondition(ctx, workloadHardening, metav1.Condition{
+						handler.SetCondition(ctx, metav1.Condition{
 							Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
 							Status:  metav1.ConditionUnknown,
 							Reason:  "Requeuing",
@@ -245,7 +245,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	if !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeAnalysis) && handler.AllChecksFinished() {
 
 		log.Info("All checks are finished, analyzing results")
-		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+		err = handler.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeAnalysis,
 			Status:  metav1.ConditionFalse,
 			Reason:  "Analyzing",
@@ -255,7 +255,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		err = handler.AnalyzeCheckRuns(ctx)
 		if err != nil {
 			log.Error(err, "Failed to analyze check runs")
-			err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+			err = handler.SetCondition(ctx, metav1.Condition{
 				Type:    checksv1alpha1.ConditionTypeAnalysis,
 				Status:  metav1.ConditionFalse,
 				Reason:  "AnalyzeFailed",
@@ -266,7 +266,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 		handler.SetRecommendation(ctx)
 
-		err = r.setCondition(ctx, workloadHardening, metav1.Condition{
+		err = handler.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeAnalysis,
 			Status:  metav1.ConditionTrue,
 			Reason:  "Analyzed",
@@ -300,40 +300,6 @@ func (r *WorkloadHardeningCheckReconciler) deleteNamespace(ctx context.Context, 
 		return err
 	}
 	return nil
-}
-
-func (r *WorkloadHardeningCheckReconciler) setCondition(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, condition metav1.Condition) error {
-
-	log := log.FromContext(ctx)
-
-	var err error
-	retryCount := 0
-
-	// retry 3 times to update the status of the WorkloadHardeningCheck, to avoid concurrent updates failing
-	for retryCount < 3 {
-		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
-		if err = r.Get(ctx, types.NamespacedName{Name: workloadHardening.Name, Namespace: workloadHardening.Namespace}, workloadHardening); err != nil {
-			log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
-			return err
-		}
-
-		// Set/Update condition
-		meta.SetStatusCondition(
-			&workloadHardening.Status.Conditions,
-			condition,
-		)
-
-		if err := r.Status().Update(ctx, workloadHardening); err != nil {
-			log.V(3).Info("Failed to update WorkloadHardeningCheck status, retrying")
-			retryCount++
-			continue // Retry updating the status
-		} else {
-			break
-		}
-
-	}
-
-	return err
 }
 
 // SetupWithManager sets up the controller with the Manager.

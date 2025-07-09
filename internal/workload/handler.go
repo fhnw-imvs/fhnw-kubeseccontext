@@ -28,6 +28,7 @@ import (
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/orakel"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/util/retry"
 )
 
 // Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
@@ -157,13 +158,10 @@ func (r *WorkloadCheckHandler) SetCondition(ctx context.Context, condition metav
 
 	log := log.FromContext(ctx)
 
-	var err error
-	retryCount := 0
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
 
-	// retry 3 times to update the status of the WorkloadHardeningCheck, to avoid concurrent updates failing
-	for retryCount < 3 {
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
-		if err = r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
+		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
 			log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 			return err
 		}
@@ -174,17 +172,9 @@ func (r *WorkloadCheckHandler) SetCondition(ctx context.Context, condition metav
 			condition,
 		)
 
-		if err := r.Status().Update(ctx, r.workloadHardeningCheck); err != nil {
-			log.V(3).Info("Failed to update WorkloadHardeningCheck status, retrying")
-			retryCount++
-			continue // Retry updating the status
-		} else {
-			break
-		}
+		return r.Status().Update(ctx, r.workloadHardeningCheck)
 
-	}
-
-	return err
+	})
 }
 
 func (r *WorkloadCheckHandler) AnalyzeCheckRuns(ctx context.Context) error {
@@ -314,8 +304,7 @@ func (r *WorkloadCheckHandler) SetRecommendation(ctx context.Context) error {
 		containerSecurityContext = mergeContainerSecurityContexts(ctx, containerSecurityContext, securityContext.Container.ToK8sSecurityContext())
 	}
 
-	retryCount := 0
-	for retryCount < 3 {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
 		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
 			r.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
@@ -328,14 +317,12 @@ func (r *WorkloadCheckHandler) SetRecommendation(ctx context.Context) error {
 			PodSecurityContext:        podSecurityContext,
 		}
 
-		err := r.Status().Update(ctx, r.workloadHardeningCheck)
-		if err != nil {
-			r.logger.V(3).Info("Failed to update WorkloadHardeningCheck status, retrying")
-			retryCount++
-			continue // Retry updating the status
-		} else {
-			break
-		}
+		return r.Status().Update(ctx, r.workloadHardeningCheck)
+	})
+
+	if err != nil {
+		r.logger.Error(err, "Failed to update recommendation in WorkloadHardeningCheck status")
+		return fmt.Errorf("failed to update recommendation in WorkloadHardeningCheck status: %w", err)
 	}
 
 	return nil

@@ -22,6 +22,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -192,9 +193,7 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 		Message: message,
 	})
 
-	retryCount := 0
-	// retry 3 times to update the status of the WorkloadHardeningCheck, to avoid concurrent updates failing
-	for retryCount < 3 {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
 		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
 			log.FromContext(ctx).Error(err, "Failed to re-fetch WorkloadHardeningCheck")
@@ -207,18 +206,19 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 			SecurityContext:      securityContext,
 		})
 
-		if err := r.Status().Update(ctx, r.workloadHardeningCheck); err != nil {
-			log.FromContext(ctx).Error(err, "failed to add check run to workload hardening check status",
-				"checkType", r.checkType,
-				"namespace", r.workloadHardeningCheck.Namespace,
-				"name", r.workloadHardeningCheck.Name,
-			)
-			retryCount++
-			continue // Retry updating the status
-		} else {
-			break
-		}
+		return r.Status().Update(ctx, r.workloadHardeningCheck)
 
+	})
+
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Failed to update WorkloadHardeningCheck status after recording finished")
+		r.recorder.Event(
+			r.workloadHardeningCheck,
+			corev1.EventTypeWarning,
+			conditionReason,
+			fmt.Sprintf("Failed to update WorkloadHardeningCheck status after recording finished: %s", err.Error()),
+		)
+		return
 	}
 }
 
@@ -337,7 +337,12 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 				),
 			)
 
-			//ToDo: Fetch pod events & pod logs, to add context to the failure
+			logs, err := r.RecordLogs(ctx, true)
+			if err != nil {
+				log.Error(err, "failed to record logs")
+				r.setStatusFailed(ctx, "Failed to record logs")
+				return
+			}
 
 			err = r.valKeyClient.StoreRecording(
 				ctx,
@@ -349,6 +354,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 					StartTime:                     startTime,
 					EndTime:                       metav1.Now(),
 					SecurityContextConfigurations: securityContext,
+					Logs:                          logs,
 				},
 			)
 			if err != nil {
@@ -399,7 +405,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	workloadRecording.SecurityContextConfigurations = securityContext
 
 	// Record logs for the workload
-	logs, err := r.RecordLogs(ctx)
+	logs, err := r.RecordLogs(ctx, false) // false means we want the current logs, not the previous ones
 	if err != nil {
 		log.Error(err, "failed to record logs")
 		r.setStatusFailed(ctx, "Failed to record logs")
@@ -546,7 +552,7 @@ func (r *CheckRunner) RecordMetrics(ctx context.Context) ([]recording.ResourceUs
 	return resourceUsageRecords, nil
 }
 
-func (r *CheckRunner) RecordLogs(ctx context.Context) (map[string][]string, error) {
+func (r *CheckRunner) RecordLogs(ctx context.Context, previous bool) (map[string][]string, error) {
 	targetNamespace := r.generateTargetNamespaceName()
 	log := log.FromContext(ctx).WithValues(
 		"targetNamespace", targetNamespace,
@@ -611,7 +617,7 @@ func (r *CheckRunner) RecordLogs(ctx context.Context) (map[string][]string, erro
 			// The logs are collected per container in the pod
 			for _, container := range pod.Spec.Containers {
 
-				containerLog, err := GetLogs(ctx, &pod, container.Name)
+				containerLog, err := GetLogs(ctx, &pod, container.Name, previous)
 				if err != nil {
 					log.Error(
 						err,
@@ -637,7 +643,7 @@ func (r *CheckRunner) RecordLogs(ctx context.Context) (map[string][]string, erro
 
 			for _, container := range pod.Spec.InitContainers {
 
-				containerLog, err := GetLogs(ctx, &pod, container.Name)
+				containerLog, err := GetLogs(ctx, &pod, container.Name, previous)
 				if err != nil {
 					log.Error(
 						err,
