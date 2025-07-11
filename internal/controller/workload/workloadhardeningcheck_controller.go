@@ -114,20 +114,15 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 
+	if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeFinished) {
+		log.Info("WorkloadHardeningCheck is already finished, skipping reconciliation")
+		return ctrl.Result{}, nil
+	}
+
 	handler := workload.NewWorkloadCheckHandler(ctx, r.ValKeyClient, workloadHardening)
 
 	// Let's just set the status as Unknown when no status is available
 	if len(workloadHardening.Status.Conditions) == 0 {
-
-		err = handler.SetCondition(ctx, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypePreparation,
-			Status:  metav1.ConditionTrue,
-			Reason:  checksv1alpha1.ReasonPreparationVerifying,
-			Message: "Starting reconciliation",
-		})
-		if err != nil {
-			return ctrl.Result{}, err
-		}
 
 		// Set condition finished to false, so we can track the progress of the reconciliation
 		err = handler.SetCondition(ctx, metav1.Condition{
@@ -150,7 +145,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	if !originalRunnig {
 		log.Info("Original workload is not running, flagging as failed")
 		err = handler.SetCondition(ctx, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypePreparation,
+			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ReasonPreparationFailed,
 			Message: "Original workload is not running, cannot proceed with checks",
@@ -198,13 +193,6 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// ToDo: Flag the check as failed and if the baseline never reaches the finished state, we can assume that the workload is not running or the baseline recording failed
-
-	handler.SetCondition(ctx, metav1.Condition{
-		Type:    checksv1alpha1.ConditionTypeFinished,
-		Status:  metav1.ConditionFalse,
-		Reason:  checksv1alpha1.ReasonBaselineRecordingFinished,
-		Message: "Baseline recording finished",
-	})
 
 	// If we are here, it means that the baseline recording is done
 	// We can now start recording the workload under test with different security context configurations
@@ -330,6 +318,13 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			Message: "Check runs are analyzed",
 		})
 
+		handler.SetCondition(ctx, metav1.Condition{
+			Type:    checksv1alpha1.ConditionTypeFinished,
+			Status:  metav1.ConditionFalse,
+			Reason:  checksv1alpha1.ReasonAnalysisRunning,
+			Message: "Check runs are analyzed, waiting for final check run",
+		})
+
 	}
 
 	// Checks are finished and the results are analyzed, create a final check run using the recommended security context
@@ -357,7 +352,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ConditionTypeFinished,
-			Message: "All checks are finished and the results are analyzed and verified",
+			Message: "Final check run with recommended security context finished",
 		})
 	}
 
