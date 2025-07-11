@@ -40,6 +40,7 @@ import (
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/controller/workload"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 	webhookchecksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/webhook/v1alpha1"
+	"k8s.io/klog/v2"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -84,7 +85,11 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	logger := zap.New(zap.UseFlagOptions(&opts))
+
+	ctrl.SetLogger(logger)
+	// Override klog's logger to get rid of unstructured leader election logs
+	klog.SetLogger(logger)
 
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities. More specifically, disabling http/2 will
