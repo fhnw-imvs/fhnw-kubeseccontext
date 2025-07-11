@@ -20,6 +20,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
@@ -56,8 +57,8 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 
 	scheme := runtime.NewScheme()
 
-	clientgoscheme.AddToScheme(scheme)
-	checksv1alpha1.AddToScheme(scheme)
+	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
+	utilruntime.Must(checksv1alpha1.AddToScheme(scheme))
 
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
@@ -186,25 +187,37 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFinished
 	}
 
-	r.checkHandler.SetCondition(ctx, metav1.Condition{
+	err := r.checkHandler.SetCondition(ctx, metav1.Condition{
 		Type:    r.conditionType,
 		Status:  metav1.ConditionTrue,
 		Reason:  conditionReason,
 		Message: message,
 	})
 
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Failed to set condition for check")
+	}
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
 		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
+			if apierrors.IsNotFound(err) {
+				// workloadHardeningCheck resource was deleted, while a check was running
+				log.FromContext(ctx).Info("WorkloadHardeningCheck not found, skipping status update")
+				return nil // If the resource is not found, we can skip the update
+			}
 			log.FromContext(ctx).Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 		}
 
 		// Set/Update condition
-		r.workloadHardeningCheck.Status.CheckRuns = append(r.workloadHardeningCheck.Status.CheckRuns, checksv1alpha1.CheckRun{
+		if r.workloadHardeningCheck.Status.CheckRuns == nil {
+			r.workloadHardeningCheck.Status.CheckRuns = make(map[string]checksv1alpha1.CheckRun)
+		}
+		r.workloadHardeningCheck.Status.CheckRuns[r.checkType] = checksv1alpha1.CheckRun{
 			Name:                 r.checkType,
 			RecordingSuccessfull: ptr.To(true),
 			SecurityContext:      securityContext,
-		})
+		}
 
 		return r.Status().Update(ctx, r.workloadHardeningCheck)
 
