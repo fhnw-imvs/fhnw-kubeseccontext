@@ -18,7 +18,7 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
-    - jsonPath: .status.conditions[?(@.status=="True")].message
+    - jsonPath: .status.conditions[?(@.type=="Finished")].message
       name: Status
       type: string
     name: v1alpha1
@@ -74,6 +74,7 @@ spec:
                         type: boolean
                       capabilitiesDrop:
                         items:
+                          description: Capability represent POSIX capabilities type
                           type: string
                         type: array
                       readOnlyRootFilesystem:
@@ -171,10 +172,7 @@ spec:
               WorkloadHardeningCheck
             properties:
               checkRuns:
-                description: |-
-                  A list of all check runs that were executed as part of this WorkloadHardeningCheck.
-                  Each check run corresponds to a specific security context configuration applied to the workload.
-                items:
+                additionalProperties:
                   description: CheckRun represents the result of a single check run
                     within a WorkloadHardeningCheck.
                   properties:
@@ -215,6 +213,8 @@ spec:
                               type: boolean
                             capabilitiesDrop:
                               items:
+                                description: Capability represent POSIX capabilities
+                                  type
                                 type: string
                               type: array
                             readOnlyRootFilesystem:
@@ -282,7 +282,10 @@ spec:
                           type: object
                       type: object
                   type: object
-                type: array
+                description: |-
+                  A list of all check runs that were executed as part of this WorkloadHardeningCheck.
+                  Each check run corresponds to a specific security context configuration applied to the workload.
+                type: object
               conditions:
                 description: Conditions store the status conditions of the WorkloadHardeningCheck
                   instances
