@@ -21,8 +21,8 @@ limitations under the License.
 package v1alpha1
 
 import (
-	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -92,7 +92,7 @@ func (in *ContainerSecurityContextDefaults) DeepCopyInto(out *ContainerSecurityC
 	}
 	if in.CapabilitiesDrop != nil {
 		in, out := &in.CapabilitiesDrop, &out.CapabilitiesDrop
-		*out = make([]string, len(*in))
+		*out = make([]v1.Capability, len(*in))
 		copy(*out, *in)
 	}
 	if in.SeccompProfile != nil {
@@ -172,12 +172,12 @@ func (in *Recommendation) DeepCopyInto(out *Recommendation) {
 	*out = *in
 	if in.ContainerSecurityContexts != nil {
 		in, out := &in.ContainerSecurityContexts, &out.ContainerSecurityContexts
-		*out = new(corev1.SecurityContext)
+		*out = new(v1.SecurityContext)
 		(*in).DeepCopyInto(*out)
 	}
 	if in.PodSecurityContext != nil {
 		in, out := &in.PodSecurityContext, &out.PodSecurityContext
-		*out = new(corev1.PodSecurityContext)
+		*out = new(v1.PodSecurityContext)
 		(*in).DeepCopyInto(*out)
 	}
 }
@@ -332,16 +332,16 @@ func (in *WorkloadHardeningCheckStatus) DeepCopyInto(out *WorkloadHardeningCheck
 	*out = *in
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
-		*out = make([]v1.Condition, len(*in))
+		*out = make([]metav1.Condition, len(*in))
 		for i := range *in {
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
 	if in.CheckRuns != nil {
 		in, out := &in.CheckRuns, &out.CheckRuns
-		*out = make([]CheckRun, len(*in))
-		for i := range *in {
-			(*in)[i].DeepCopyInto(&(*out)[i])
+		*out = make(map[string]CheckRun, len(*in))
+		for key, val := range *in {
+			(*out)[key] = *val.DeepCopy()
 		}
 	}
 	if in.Recommendation != nil {

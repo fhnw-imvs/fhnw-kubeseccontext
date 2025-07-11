@@ -114,13 +114,13 @@ func (p *PodSecurityContextDefaults) ToK8sSecurityContext() *corev1.PodSecurityC
 
 // ContainerSecurityContextDefaults specifies the fields for the Container-level security context.
 type ContainerSecurityContextDefaults struct {
-	RunAsNonRoot             *bool           `json:"runAsNonRoot,omitempty"`
-	ReadOnlyRootFilesystem   *bool           `json:"readOnlyRootFilesystem,omitempty"`
-	AllowPrivilegeEscalation *bool           `json:"allowPrivilegeEscalation,omitempty"`
-	CapabilitiesDrop         []string        `json:"capabilitiesDrop,omitempty"`
-	SeccompProfile           *SeccompProfile `json:"seccompProfile,omitempty"`
-	RunAsUser                *int64          `json:"runAsUser,omitempty"`
-	RunAsGroup               *int64          `json:"runAsGroup,omitempty"`
+	RunAsNonRoot             *bool               `json:"runAsNonRoot,omitempty"`
+	ReadOnlyRootFilesystem   *bool               `json:"readOnlyRootFilesystem,omitempty"`
+	AllowPrivilegeEscalation *bool               `json:"allowPrivilegeEscalation,omitempty"`
+	CapabilitiesDrop         []corev1.Capability `json:"capabilitiesDrop,omitempty"`
+	SeccompProfile           *SeccompProfile     `json:"seccompProfile,omitempty"`
+	RunAsUser                *int64              `json:"runAsUser,omitempty"`
+	RunAsGroup               *int64              `json:"runAsGroup,omitempty"`
 }
 
 func (c *ContainerSecurityContextDefaults) ToK8sSecurityContext() *corev1.SecurityContext {
@@ -176,6 +176,14 @@ const (
 	// All checks are finished, the comparison of the baseline and the checks is done, and the results are available
 	ConditionTypeFinished = "Finished"
 
+	// Preparation recording states
+	ReasonPreparationVerifying = "Verifying"
+	// Original workload is not running, so we cannot start the recording
+	ReasonPreparationFailed = "NotRunning"
+
+	// Check needs to be requeued, e.g., if the workload is not running or the baseline recording is not finished yet
+	ReasonRequeue = "Requeue"
+
 	// Baseline recording states
 	ReasonBaselineRecording         = "BaselineRecording"
 	ReasonBaselineRecordingFailed   = "BaselineRecordingFailed"
@@ -183,8 +191,14 @@ const (
 
 	// single check, prefixed with the check name
 	ReasonCheckRecording         = "CheckRecording"
+	ReasonCheckNotStarted        = "CheckNotStarted"
 	ReasonCheckRecordingFailed   = "CheckRecordingFailed"
 	ReasonCheckRecordingFinished = "CheckRecordingFinished"
+
+	// Analysis states
+	ReasonAnalysisRunning  = "Analyzing"
+	ReasonAnalysisFailed   = "AnalysisFailed"
+	ReasonAnalysisFinished = "AnalysisFinished"
 )
 
 // WorkloadHardeningCheckStatus defines the observed state of WorkloadHardeningCheck
@@ -205,7 +219,7 @@ type WorkloadHardeningCheckStatus struct {
 
 	// A list of all check runs that were executed as part of this WorkloadHardeningCheck.
 	// Each check run corresponds to a specific security context configuration applied to the workload.
-	CheckRuns []CheckRun `json:"checkRuns,omitempty"`
+	CheckRuns map[string]CheckRun `json:"checkRuns,omitempty"`
 
 	Recommendation *Recommendation `json:"recommendation,omitempty"`
 }
@@ -239,7 +253,7 @@ type Recommendation struct {
 // WorkloadHardeningCheck is the Schema for the workloadhardeningchecks API
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
-// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.status==\"True\")].message"
+// +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.type==\"Finished\")].message"
 type WorkloadHardeningCheck struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
