@@ -119,13 +119,13 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, nil
 	}
 
-	handler := workload.NewWorkloadCheckHandler(ctx, r.ValKeyClient, workloadHardening)
+	checkManager := workload.NewWorkloadCheckManager(ctx, r.ValKeyClient, workloadHardening)
 
 	// Let's just set the status as Unknown when no status is available
 	if len(workloadHardening.Status.Conditions) == 0 {
 
 		// Set condition finished to false, so we can track the progress of the reconciliation
-		err = handler.SetCondition(ctx, metav1.Condition{
+		err = checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonPreparationVerifying,
@@ -137,14 +137,14 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// Verify if the workload is running, if it is not running, we will never get it running in a cloned namespace
-	originalRunnig, err := handler.VerifyRunning(ctx, workloadHardening.GetNamespace())
+	originalRunnig, err := checkManager.VerifyRunning(ctx, workloadHardening.GetNamespace())
 	if err != nil {
 		log.Error(err, "Failed to verify if the workload is running")
 		return ctrl.Result{}, err
 	}
 	if !originalRunnig {
 		log.Info("Original workload is not running, flagging as failed")
-		err = handler.SetCondition(ctx, metav1.Condition{
+		err = checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ReasonPreparationFailed,
@@ -157,7 +157,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
-	duration := handler.GetCheckDuration()
+	duration := checkManager.GetCheckDuration()
 
 	// Based on the Status, we need to decide what to do next
 	// If there is no Baseline recorded yet, we need to start the baseline recording
@@ -175,7 +175,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		baselineRunner = runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline-2")
 		go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
-		handler.SetCondition(ctx, metav1.Condition{
+		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonBaselineRecording,
@@ -186,7 +186,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
 	}
 
-	if !handler.BaselineRecorded() {
+	if !checkManager.BaselineRecorded() {
 		log.Info("Baseline not recorded yet, waiting for baseline recording to finish")
 		// If the baseline is not recorded yet, we need to wait for the baseline recording to finish
 		return ctrl.Result{RequeueAfter: duration / 2}, nil
@@ -197,9 +197,9 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	// If we are here, it means that the baseline recording is done
 	// We can now start recording the workload under test with different security context configurations
 
-	requiredChecks := handler.GetRequiredCheckRuns(ctx)
+	requiredChecks := checkManager.GetRequiredCheckRuns(ctx)
 
-	if handler.BaselineRecorded() && len(requiredChecks) > 0 || !handler.AllChecksFinished() {
+	if checkManager.BaselineRecorded() && len(requiredChecks) > 0 || !checkManager.AllChecksFinished() {
 		log.Info("Not all checks are finished, running checks")
 
 		if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
@@ -219,7 +219,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 					expiryTime := metav1.NewTime(time.Now().Add(-2 * duration))
 					if condition.LastTransitionTime.Before(&expiryTime) {
 						log.V(2).Info("Check still running, but last transition time is older than 2x duration, requeuing", "checkType", checkType)
-						handler.SetCondition(ctx, metav1.Condition{
+						checkManager.SetCondition(ctx, metav1.Condition{
 							Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
 							Status:  metav1.ConditionUnknown,
 							Reason:  checksv1alpha1.ReasonRequeue,
@@ -232,7 +232,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 				}
 
-				securityContext := handler.GetSecurityContextForCheckType(checkType)
+				securityContext := checkManager.GetSecurityContextForCheckType(checkType)
 
 				checkRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
 
@@ -256,7 +256,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 					expiryTime := metav1.NewTime(time.Now().Add(-2 * duration))
 					if condition.LastTransitionTime.Before(&expiryTime) {
 						log.V(2).Info("Check still running, but last transition time is older than 2x duration, requeuing", "checkType", checkType)
-						handler.SetCondition(ctx, metav1.Condition{
+						checkManager.SetCondition(ctx, metav1.Condition{
 							Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
 							Status:  metav1.ConditionUnknown,
 							Reason:  checksv1alpha1.ReasonRequeue,
@@ -268,7 +268,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 					}
 				}
 
-				securityContext := handler.GetSecurityContextForCheckType(checkType)
+				securityContext := checkManager.GetSecurityContextForCheckType(checkType)
 				checkRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
 				log.Info("Running check", "checkType", checkType)
 				go checkRunner.RunCheck(ctx, securityContext)
@@ -280,9 +280,9 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// All checks are finished, we can now analyze the results
-	if !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeAnalysis) && handler.AllChecksFinished() && !handler.RecommendationExists() {
+	if !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeAnalysis) && checkManager.AllChecksFinished() && !checkManager.RecommendationExists() {
 
-		handler.SetCondition(ctx, metav1.Condition{
+		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonAnalysisRunning,
@@ -290,17 +290,17 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		})
 
 		log.Info("All checks are finished, analyzing results")
-		err = handler.SetCondition(ctx, metav1.Condition{
+		err = checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeAnalysis,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonAnalysisRunning,
 			Message: "Check runs are beeing analyzed",
 		})
 
-		err = handler.AnalyzeCheckRuns(ctx)
+		err = checkManager.AnalyzeCheckRuns(ctx)
 		if err != nil {
 			log.Error(err, "Failed to analyze check runs")
-			err = handler.SetCondition(ctx, metav1.Condition{
+			err = checkManager.SetCondition(ctx, metav1.Condition{
 				Type:    checksv1alpha1.ConditionTypeAnalysis,
 				Status:  metav1.ConditionFalse,
 				Reason:  checksv1alpha1.ReasonAnalysisFailed,
@@ -309,16 +309,16 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			return ctrl.Result{}, nil
 		}
 
-		handler.SetRecommendation(ctx)
+		checkManager.SetRecommendation(ctx)
 
-		err = handler.SetCondition(ctx, metav1.Condition{
+		err = checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeAnalysis,
 			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ReasonAnalysisFinished,
 			Message: "Check runs are analyzed",
 		})
 
-		handler.SetCondition(ctx, metav1.Condition{
+		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonAnalysisRunning,
@@ -328,14 +328,14 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	// Checks are finished and the results are analyzed, create a final check run using the recommended security context
-	if handler.RecommendationExists() && !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, "Final"+checksv1alpha1.ConditionTypeCheck) {
+	if checkManager.RecommendationExists() && !meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, "Final"+checksv1alpha1.ConditionTypeCheck) {
 		log.Info("Final check run with recommended security context")
 
-		securityContext := handler.GetRecommendedSecurityContext()
+		securityContext := checkManager.GetRecommendedSecurityContext()
 		finalCheckRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "Final")
 		go finalCheckRunner.RunCheck(ctx, securityContext)
 
-		handler.SetCondition(ctx, metav1.Condition{
+		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
 			Reason:  "Final" + checksv1alpha1.ReasonCheckRecording,
@@ -345,10 +345,10 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
 	}
 
-	if handler.RecommendationExists() && meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, "Final"+checksv1alpha1.ConditionTypeCheck) &&
+	if checkManager.RecommendationExists() && meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, "Final"+checksv1alpha1.ConditionTypeCheck) &&
 		meta.FindStatusCondition(workloadHardening.Status.Conditions, "Final"+checksv1alpha1.ConditionTypeCheck).Reason == checksv1alpha1.ReasonCheckRecordingFinished {
 		log.Info("Final check run finished, setting Finished condition")
-		err = handler.SetCondition(ctx, metav1.Condition{
+		err = checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ConditionTypeFinished,

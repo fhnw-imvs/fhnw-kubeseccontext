@@ -32,7 +32,7 @@ import (
 
 type CheckRunner struct {
 	client.Client
-	checkHandler *wh.WorkloadCheckHandler
+	checkManager *wh.WorkloadCheckManager
 
 	scheme *runtime.Scheme
 
@@ -74,7 +74,7 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 
 	return &CheckRunner{
 		Client:                 cl,
-		checkHandler:           wh.NewWorkloadCheckHandler(ctx, valKeyClient, workloadHardeningCheck),
+		checkManager:           wh.NewWorkloadCheckManager(ctx, valKeyClient, workloadHardeningCheck),
 		logger:                 log.FromContext(ctx).WithName("WorkloadHandler"),
 		valKeyClient:           valKeyClient,
 		recorder:               recorder,
@@ -172,7 +172,7 @@ func (r *CheckRunner) setStatusFailed(ctx context.Context, message string) {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
 	}
 
-	r.checkHandler.SetCondition(ctx, metav1.Condition{
+	r.checkManager.SetCondition(ctx, metav1.Condition{
 		Type:    r.conditionType,
 		Status:  metav1.ConditionUnknown,
 		Reason:  conditionReason,
@@ -187,7 +187,7 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFinished
 	}
 
-	err := r.checkHandler.SetCondition(ctx, metav1.Condition{
+	err := r.checkManager.SetCondition(ctx, metav1.Condition{
 		Type:    r.conditionType,
 		Status:  metav1.ConditionTrue,
 		Reason:  conditionReason,
@@ -241,7 +241,7 @@ func (r *CheckRunner) setStatusRunning(ctx context.Context, message string) {
 		conditionReason = checksv1alpha1.ReasonBaselineRecording
 	}
 
-	r.checkHandler.SetCondition(ctx, metav1.Condition{
+	r.checkManager.SetCondition(ctx, metav1.Condition{
 		Type:    r.conditionType,
 		Status:  metav1.ConditionFalse,
 		Reason:  conditionReason,
@@ -287,7 +287,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	r.setStatusRunning(ctx, "Starting recording signals")
 
 	// Fetch the workload we want to test, make sure we fetch it from the target namespace
-	workloadUnderTest, err := r.checkHandler.GetWorkloadUnderTest(ctx, targetNamespaceName)
+	workloadUnderTest, err := r.checkManager.GetWorkloadUnderTest(ctx, targetNamespaceName)
 	if err != nil {
 		log.Error(err, "failed to get workload under test",
 			"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
@@ -473,7 +473,7 @@ func (r *CheckRunner) RecordMetrics(ctx context.Context) ([]recording.ResourceUs
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 	)
 
-	labelSelector, err := r.checkHandler.GetLabelSelector(ctx)
+	labelSelector, err := r.checkManager.GetLabelSelector(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -524,7 +524,7 @@ func (r *CheckRunner) RecordMetrics(ctx context.Context) ([]recording.ResourceUs
 	// Initialize the channels with the expected capacity to avoid blocking
 	metricsChannel := make(chan *recording.RecordedMetrics, len(pods.Items))
 
-	checkDurationSeconds := int(r.checkHandler.GetCheckDuration().Seconds())
+	checkDurationSeconds := int(r.checkManager.GetCheckDuration().Seconds())
 
 	for _, pod := range pods.Items {
 		go func() {
@@ -573,7 +573,7 @@ func (r *CheckRunner) RecordLogs(ctx context.Context, previous bool) (map[string
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
 	)
 
-	labelSelector, err := r.checkHandler.GetLabelSelector(ctx)
+	labelSelector, err := r.checkManager.GetLabelSelector(ctx)
 	if err != nil {
 		return nil, err
 	}
