@@ -50,9 +50,12 @@ var titleCase = cases.Title(language.English)
 
 func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
 
-	conditionTYpe := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
-	if strings.Contains(checkType, "baseline") {
-		conditionTYpe = checksv1alpha1.ConditionTypeBaseline
+	conditionType := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
+	if strings.Contains(strings.ToLower(checkType), "baseline") {
+		conditionType = checksv1alpha1.ConditionTypeBaseline
+	}
+	if strings.Contains(strings.ToLower(checkType), "final") {
+		conditionType = checksv1alpha1.ConditionTypeFinalCheck
 	}
 
 	scheme := runtime.NewScheme()
@@ -78,9 +81,9 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 		logger:                 log.FromContext(ctx).WithName("WorkloadHandler"),
 		valKeyClient:           valKeyClient,
 		recorder:               recorder,
-		workloadHardeningCheck: workloadHardeningCheck,
+		workloadHardeningCheck: workloadHardeningCheck.DeepCopy(),
 		checkType:              checkType,
-		conditionType:          conditionTYpe,
+		conditionType:          conditionType,
 		scheme:                 scheme,
 	}
 
@@ -183,7 +186,7 @@ func (r *CheckRunner) setStatusFailed(ctx context.Context, message string) {
 
 func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, securityContext *checksv1alpha1.SecurityContextDefaults) {
 	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFinished
-	if strings.Contains(r.checkType, "baseline") {
+	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFinished
 	}
 
@@ -198,6 +201,12 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 		log.FromContext(ctx).Error(err, "Failed to set condition for check")
 	}
 
+	checkRun := checksv1alpha1.CheckRun{
+		Name:                 r.checkType,
+		RecordingSuccessfull: ptr.To(true),
+		SecurityContext:      securityContext,
+	}
+
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
 		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
@@ -209,16 +218,26 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 			log.FromContext(ctx).Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 		}
 
-		// Set/Update condition
-		if r.workloadHardeningCheck.Status.CheckRuns == nil {
-			r.workloadHardeningCheck.Status.CheckRuns = make(map[string]checksv1alpha1.CheckRun)
-		}
-		r.workloadHardeningCheck.Status.CheckRuns[r.checkType] = checksv1alpha1.CheckRun{
-			Name:                 r.checkType,
-			RecordingSuccessfull: ptr.To(true),
-			SecurityContext:      securityContext,
-		}
+		// Baseline and final checks are handled differently
+		switch r.conditionType {
+		case checksv1alpha1.ConditionTypeBaseline:
+			// Set/Update condition for baseline check
+			if r.workloadHardeningCheck.Status.BaselineRuns == nil {
+				r.workloadHardeningCheck.Status.BaselineRuns = []checksv1alpha1.CheckRun{}
+			}
 
+			r.workloadHardeningCheck.Status.BaselineRuns = append(r.workloadHardeningCheck.Status.BaselineRuns, checkRun)
+
+		case checksv1alpha1.ConditionTypeFinalCheck:
+			r.workloadHardeningCheck.Status.FinalRun = &checkRun
+		default:
+
+			// Set/Update condition
+			if r.workloadHardeningCheck.Status.CheckRuns == nil {
+				r.workloadHardeningCheck.Status.CheckRuns = make(map[string]checksv1alpha1.CheckRun)
+			}
+			r.workloadHardeningCheck.Status.CheckRuns[checkRun.Name] = checkRun
+		}
 		return r.Status().Update(ctx, r.workloadHardeningCheck)
 
 	})
@@ -237,7 +256,7 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 
 func (r *CheckRunner) setStatusRunning(ctx context.Context, message string) {
 	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecording
-	if strings.Contains(r.checkType, "baseline") {
+	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
 		conditionReason = checksv1alpha1.ReasonBaselineRecording
 	}
 
@@ -284,7 +303,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	}
 
 	// Set condition to false, as we are about to start the check
-	r.setStatusRunning(ctx, "Starting recording signals")
+	r.setStatusRunning(ctx, "Start target workload with updated security context")
 
 	// Fetch the workload we want to test, make sure we fetch it from the target namespace
 	workloadUnderTest, err := r.checkManager.GetWorkloadUnderTest(ctx, targetNamespaceName)
@@ -350,7 +369,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 				),
 			)
 
-			logs, err := r.RecordLogs(ctx, true)
+			logs, err := r.recordLogs(ctx, true)
 			if err != nil {
 				log.Error(err, "failed to record logs")
 				r.setStatusFailed(ctx, "Failed to record logs")
@@ -396,7 +415,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	r.setStatusRunning(ctx, "Recording signals")
 
 	// start recording metrics for target workload
-	recordedMetrics, err := r.RecordMetrics(ctx)
+	recordedMetrics, err := r.recordMetrics(ctx)
 
 	if err != nil {
 		log.Error(err, "failed to record signals")
@@ -418,7 +437,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	workloadRecording.SecurityContextConfigurations = securityContext
 
 	// Record logs for the workload
-	logs, err := r.RecordLogs(ctx, false) // false means we want the current logs, not the previous ones
+	logs, err := r.recordLogs(ctx, false) // false means we want the current logs, not the previous ones
 	if err != nil {
 		log.Error(err, "failed to record logs")
 		r.setStatusFailed(ctx, "Failed to record logs")
@@ -465,7 +484,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	}
 }
 
-func (r *CheckRunner) RecordMetrics(ctx context.Context) ([]recording.ResourceUsageRecord, error) {
+func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUsageRecord, error) {
 	targetNamespace := r.generateTargetNamespaceName()
 	log := log.FromContext(ctx).WithValues(
 		"targetNamespace", targetNamespace,
@@ -565,7 +584,7 @@ func (r *CheckRunner) RecordMetrics(ctx context.Context) ([]recording.ResourceUs
 	return resourceUsageRecords, nil
 }
 
-func (r *CheckRunner) RecordLogs(ctx context.Context, previous bool) (map[string][]string, error) {
+func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string][]string, error) {
 	targetNamespace := r.generateTargetNamespaceName()
 	log := log.FromContext(ctx).WithValues(
 		"targetNamespace", targetNamespace,

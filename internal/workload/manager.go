@@ -65,8 +65,8 @@ func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyCli
 
 	return &WorkloadCheckManager{
 		Client:                 cl,
-		logger:                 log.FromContext(ctx).WithName("WorkloadHandler"),
-		workloadHardeningCheck: workloadHardeningCheck,
+		logger:                 log.FromContext(ctx).WithName("WorkloadManager"),
+		workloadHardeningCheck: workloadHardeningCheck.DeepCopy(),
 		valKeyClient:           valKeyClient,
 	}
 
@@ -465,11 +465,104 @@ func (r *WorkloadCheckManager) GetCheckDuration() time.Duration {
 }
 
 func (r *WorkloadCheckManager) BaselineRecorded() bool {
-
 	if meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
 		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline)
 		return condition.Reason == checksv1alpha1.ReasonBaselineRecordingFinished
 	}
+	return false
+}
+
+func (r *WorkloadCheckManager) BaselineInProgress() bool {
+	if meta.IsStatusConditionFalse(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
+		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline)
+		return condition.Reason == checksv1alpha1.ReasonBaselineRecording
+	}
+	return false
+}
+
+func (r *WorkloadCheckManager) BaselineOverdue() bool {
+	// Check if the check is in progress
+	if r.BaselineInProgress() {
+		// Get the duration for the check
+		checkDuration := r.GetCheckDuration()
+
+		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline)
+
+		// Check if the check is overdue
+		if time.Since(condition.LastTransitionTime.Time) > checkDuration+1*time.Minute { // Adding a buffer of 1 minute
+			r.logger.V(2).Info("Baseline is overdue", "duration", checkDuration)
+			return true
+		}
+	}
+
+	return false
+}
+
+func (r *WorkloadCheckManager) FinalCheckRecorded() bool {
+	if meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck) {
+		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck)
+		return condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished
+	}
+	return false
+}
+
+func (r *WorkloadCheckManager) FinalCheckInProgress() bool {
+	if meta.IsStatusConditionFalse(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck) {
+		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck)
+		return condition.Reason == checksv1alpha1.ReasonCheckRecording
+	}
+	return false
+}
+
+func (r *WorkloadCheckManager) FinalCheckOverdue() bool {
+	// Check if the check is in progress
+	if r.FinalCheckInProgress() {
+		// Get the duration for the check
+		checkDuration := r.GetCheckDuration()
+
+		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck)
+
+		// Check if the check is overdue
+		if time.Since(condition.LastTransitionTime.Time) > checkDuration+1*time.Minute { // Adding a buffer of 1 minute
+			r.logger.V(2).Info("FinalCheck is overdue", "duration", checkDuration)
+			return true
+		}
+	}
+
+	return false
+}
+
+func (r *WorkloadCheckManager) CheckRecorded(checkType string) bool {
+	if meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
+		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
+		return condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished
+	}
+	return false
+}
+
+func (r *WorkloadCheckManager) CheckInProgress(checkType string) bool {
+	if meta.IsStatusConditionFalse(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
+		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
+		return condition.Reason == checksv1alpha1.ReasonCheckRecording
+	}
+	return false
+}
+
+func (r *WorkloadCheckManager) CheckOverdue(checkType string) bool {
+	// Check if the check is in progress
+	if r.CheckInProgress(checkType) {
+		// Get the duration for the check
+		checkDuration := r.GetCheckDuration()
+
+		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
+
+		// Check if the check is overdue
+		if time.Since(condition.LastTransitionTime.Time) > checkDuration+1*time.Minute { // Adding a buffer of 1 minute
+			r.logger.V(2).Info("Check is overdue", "checkType", checkType, "duration", checkDuration)
+			return true
+		}
+	}
+
 	return false
 }
 
