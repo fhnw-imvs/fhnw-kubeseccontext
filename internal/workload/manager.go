@@ -7,14 +7,12 @@ import (
 	"time"
 
 	"github.com/go-logr/logr"
-	"golang.org/x/exp/maps"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -72,11 +70,19 @@ func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyCli
 
 }
 
-func (h *WorkloadCheckManager) GetPodSpecTemplate(ctx context.Context, namespace string) (*v1.PodSpec, error) {
+func (m *WorkloadCheckManager) refreshWorkloadHardeningCheck() error {
+	if err := m.Get(context.Background(), types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
+		m.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+		return fmt.Errorf("failed to re-fetch WorkloadHardeningCheck: %w", err)
+	}
+	return nil
+}
 
-	workloadUnderTestPtr, err := h.GetWorkloadUnderTest(ctx, namespace)
+func (m *WorkloadCheckManager) GetPodSpecTemplate(ctx context.Context, namespace string) (*v1.PodSpec, error) {
+
+	workloadUnderTestPtr, err := m.GetWorkloadUnderTest(ctx, namespace)
 	if err != nil {
-		h.logger.Error(err, "failed to get workload under test")
+		m.logger.Error(err, "failed to get workload under test")
 		return nil, fmt.Errorf("failed to get workload under test: %w", err)
 	}
 
@@ -95,10 +101,10 @@ func (h *WorkloadCheckManager) GetPodSpecTemplate(ctx context.Context, namespace
 	return podSpecTemplate, nil
 }
 
-func (h *WorkloadCheckManager) GetWorkloadUnderTest(ctx context.Context, namespace string) (*client.Object, error) {
+func (m *WorkloadCheckManager) GetWorkloadUnderTest(ctx context.Context, namespace string) (*client.Object, error) {
 
-	name := h.workloadHardeningCheck.Spec.TargetRef.Name
-	kind := h.workloadHardeningCheck.Spec.TargetRef.Kind
+	name := m.workloadHardeningCheck.Spec.TargetRef.Name
+	kind := m.workloadHardeningCheck.Spec.TargetRef.Kind
 
 	// Verify namespace contains target workload
 	var workloadUnderTest client.Object
@@ -111,7 +117,7 @@ func (h *WorkloadCheckManager) GetWorkloadUnderTest(ctx context.Context, namespa
 		workloadUnderTest = &appsv1.DaemonSet{}
 	}
 
-	err := h.Get(
+	err := m.Get(
 		ctx,
 		types.NamespacedName{
 			Namespace: namespace,
@@ -122,22 +128,22 @@ func (h *WorkloadCheckManager) GetWorkloadUnderTest(ctx context.Context, namespa
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// If the custom resource is not found then it usually means that it was deleted or not created
-			h.logger.Info("workloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
+			m.logger.Info("workloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
 			return nil, fmt.Errorf("workloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
 		}
 		// Error reading the object - requeue the request.
-		h.logger.Error(err, "failed to get workloadHardeningCheck.Spec.TargetRef, requeing")
+		m.logger.Error(err, "failed to get workloadHardeningCheck.Spec.TargetRef, requeing")
 		return nil, fmt.Errorf("failed to get workloadHardeningCheck.Spec.TargetRef: %w", err)
 	}
-	h.logger.Info("TargetRef found")
+	m.logger.Info("TargetRef found")
 
 	return &workloadUnderTest, nil
 }
 
-func (h *WorkloadCheckManager) VerifyRunning(ctx context.Context, namespace string) (bool, error) {
-	workloadUnderTestPtr, err := h.GetWorkloadUnderTest(ctx, namespace)
+func (m *WorkloadCheckManager) VerifyRunning(ctx context.Context, namespace string) (bool, error) {
+	workloadUnderTestPtr, err := m.GetWorkloadUnderTest(ctx, namespace)
 	if err != nil {
-		h.logger.Error(err, "failed to get workload under test")
+		m.logger.Error(err, "failed to get workload under test")
 		return false, fmt.Errorf("failed to get workload under test: %w", err)
 	}
 
@@ -157,8 +163,8 @@ func VerifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {
 	return false, fmt.Errorf("kind of workloadUnderTest not supported")
 }
 
-func (r *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
-	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, r.workloadHardeningCheck.GetNamespace())
+func (m *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
+	workloadUnderTest, err := m.GetWorkloadUnderTest(ctx, m.workloadHardeningCheck.GetNamespace())
 	if err != nil {
 		return nil, err
 	}
@@ -177,41 +183,11 @@ func (r *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Sel
 	return metav1.LabelSelectorAsSelector(labelSelector)
 }
 
-func (r *WorkloadCheckManager) SetCondition(ctx context.Context, condition metav1.Condition) error {
-
-	log := log.FromContext(ctx)
-
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
-
-		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
-		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
-			if apierrors.IsNotFound(err) {
-				// workloadHardeningCheck resource was deleted, while a check was running
-				log.Info("WorkloadHardeningCheck not found, skipping condition update")
-				return nil // If the resource is not found, we can skip the update
-			}
-			log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
-			return err
-		}
-
-		// Set/Update condition
-		meta.SetStatusCondition(
-			&r.workloadHardeningCheck.Status.Conditions,
-			condition,
-		)
-
-		return r.Status().Update(ctx, r.workloadHardeningCheck)
-
-	})
-
-	return err
-}
-
-func (r *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
+func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 	log := log.FromContext(ctx)
 
 	// Get results from the workload hardening check from ValKey
-	baselineRecording, err := r.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", r.workloadHardeningCheck.Namespace, r.workloadHardeningCheck.Spec.Suffix, "baseline"))
+	baselineRecording, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, "baseline"))
 	if err != nil {
 		log.Error(err, "Failed to get baseline recording from ValKey")
 		return fmt.Errorf("failed to get baseline recording from ValKey: %w", err)
@@ -222,7 +198,7 @@ func (r *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 	}
 
 	// Get results from the workload hardening check from ValKey
-	baselineRecording2, err := r.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", r.workloadHardeningCheck.Namespace, r.workloadHardeningCheck.Spec.Suffix, "baseline-2"))
+	baselineRecording2, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, "baseline-2"))
 	if err != nil {
 		log.Error(err, "Failed to get baseline recording from ValKey")
 		return fmt.Errorf("failed to get baseline recording from ValKey: %w", err)
@@ -257,7 +233,7 @@ func (r *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 		}
 	}
 
-	checkRuns := r.workloadHardeningCheck.Status.CheckRuns
+	checkRuns := m.workloadHardeningCheck.Status.CheckRuns
 	// Baseline is also listed as check run
 	if len(checkRuns) <= 0 {
 		log.V(2).Info("No check runs found in workload hardening check status, skipping analysis")
@@ -273,7 +249,7 @@ func (r *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 		log.V(2).Info("Analyzing check run", "checkRun", checkRun.Name)
 
 		// Get the recording for this check run
-		checkRecording, err := r.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", r.workloadHardeningCheck.Namespace, r.workloadHardeningCheck.Spec.Suffix, checkRun.Name))
+		checkRecording, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, checkRun.Name))
 		if err != nil {
 			return fmt.Errorf("failed to get recording for check run from ValKey: %w", err)
 		}
@@ -310,7 +286,7 @@ func (r *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 	// Update the check run status
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
-		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
+		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
 			if apierrors.IsNotFound(err) {
 				// workloadHardeningCheck resource was deleted, while a check was running
 				log.Info("WorkloadHardeningCheck not found, skipping check run update")
@@ -321,21 +297,21 @@ func (r *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 		}
 
 		// Set/Update condition
-		r.workloadHardeningCheck.Status.CheckRuns = updatedCheckRuns
+		m.workloadHardeningCheck.Status.CheckRuns = updatedCheckRuns
 
-		return r.Status().Update(ctx, r.workloadHardeningCheck)
+		return m.Status().Update(ctx, m.workloadHardeningCheck)
 	})
 
 	return err
 
 }
 
-func (r *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
+func (m *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
 
 	securityContexts := map[string]*checksv1alpha1.SecurityContextDefaults{}
 
 	// Get the security context for each check type
-	for _, checkRun := range r.workloadHardeningCheck.Status.CheckRuns {
+	for _, checkRun := range m.workloadHardeningCheck.Status.CheckRuns {
 		if checkRun.Name == "baseline" {
 			continue // Skip baseline check
 		}
@@ -343,9 +319,9 @@ func (r *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
 		securityContexts[checkRun.Name] = checkRun.SecurityContext
 	}
 
-	podSpecTemplate, err := r.GetPodSpecTemplate(ctx, r.workloadHardeningCheck.Namespace)
+	podSpecTemplate, err := m.GetPodSpecTemplate(ctx, m.workloadHardeningCheck.Namespace)
 	if err != nil {
-		r.logger.Error(err, "Failed to get workload under test")
+		m.logger.Error(err, "Failed to get workload under test")
 		return fmt.Errorf("failed to get workload under test: %w", err)
 	}
 
@@ -368,22 +344,22 @@ func (r *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
 
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
-		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
-			r.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
+			m.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 			return fmt.Errorf("failed to re-fetch WorkloadHardeningCheck: %w", err)
 		}
 		// Set/Update the recommendation
 
-		r.workloadHardeningCheck.Status.Recommendation = &checksv1alpha1.Recommendation{
+		m.workloadHardeningCheck.Status.Recommendation = &checksv1alpha1.Recommendation{
 			ContainerSecurityContexts: containerSecurityContext,
 			PodSecurityContext:        podSecurityContext,
 		}
 
-		return r.Status().Update(ctx, r.workloadHardeningCheck)
+		return m.Status().Update(ctx, m.workloadHardeningCheck)
 	})
 
 	if err != nil {
-		r.logger.Error(err, "Failed to update recommendation in WorkloadHardeningCheck status")
+		m.logger.Error(err, "Failed to update recommendation in WorkloadHardeningCheck status")
 		return fmt.Errorf("failed to update recommendation in WorkloadHardeningCheck status: %w", err)
 	}
 
@@ -391,24 +367,9 @@ func (r *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
 
 }
 
-func (r *WorkloadCheckManager) RecommendationExists() bool {
-	// Check if the recommendation is set in the status
-	if r.workloadHardeningCheck.Status.Recommendation == nil {
-		return false
-	}
-
-	// Check if the recommendation has a pod security context or container security context
-	if r.workloadHardeningCheck.Status.Recommendation.PodSecurityContext == nil &&
-		r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts == nil {
-		return false
-	}
-
-	return true
-}
-
-func (r *WorkloadCheckManager) GetRecommendedSecurityContext() *checksv1alpha1.SecurityContextDefaults {
+func (m *WorkloadCheckManager) GetRecommendedSecurityContext() *checksv1alpha1.SecurityContextDefaults {
 	// If the recommendation is not set, return nil
-	if !r.RecommendationExists() {
+	if !m.RecommendationExists() {
 		return nil
 	}
 
@@ -418,27 +379,27 @@ func (r *WorkloadCheckManager) GetRecommendedSecurityContext() *checksv1alpha1.S
 	}
 
 	// If the pod security context is set, use it
-	if r.workloadHardeningCheck.Status.Recommendation.PodSecurityContext != nil {
+	if m.workloadHardeningCheck.Status.Recommendation.PodSecurityContext != nil {
 		recommendation.Pod = &checksv1alpha1.PodSecurityContextDefaults{
-			RunAsGroup:   r.workloadHardeningCheck.Status.Recommendation.PodSecurityContext.RunAsGroup,
-			RunAsUser:    r.workloadHardeningCheck.Status.Recommendation.PodSecurityContext.RunAsUser,
-			RunAsNonRoot: r.workloadHardeningCheck.Status.Recommendation.PodSecurityContext.RunAsNonRoot,
-			FSGroup:      r.workloadHardeningCheck.Status.Recommendation.PodSecurityContext.FSGroup,
+			RunAsGroup:   m.workloadHardeningCheck.Status.Recommendation.PodSecurityContext.RunAsGroup,
+			RunAsUser:    m.workloadHardeningCheck.Status.Recommendation.PodSecurityContext.RunAsUser,
+			RunAsNonRoot: m.workloadHardeningCheck.Status.Recommendation.PodSecurityContext.RunAsNonRoot,
+			FSGroup:      m.workloadHardeningCheck.Status.Recommendation.PodSecurityContext.FSGroup,
 		}
 	}
 
 	// If the container security context is set, use it
-	if r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts != nil {
+	if m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts != nil {
 		recommendation.Container = &checksv1alpha1.ContainerSecurityContextDefaults{
-			RunAsGroup:               r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.RunAsGroup,
-			RunAsUser:                r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.RunAsUser,
-			RunAsNonRoot:             r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.RunAsNonRoot,
-			ReadOnlyRootFilesystem:   r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.ReadOnlyRootFilesystem,
-			AllowPrivilegeEscalation: r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.AllowPrivilegeEscalation,
+			RunAsGroup:               m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.RunAsGroup,
+			RunAsUser:                m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.RunAsUser,
+			RunAsNonRoot:             m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.RunAsNonRoot,
+			ReadOnlyRootFilesystem:   m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.ReadOnlyRootFilesystem,
+			AllowPrivilegeEscalation: m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.AllowPrivilegeEscalation,
 		}
-		if r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.Capabilities != nil &&
-			r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.Capabilities.Drop != nil {
-			recommendation.Container.CapabilitiesDrop = r.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.Capabilities.Drop
+		if m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.Capabilities != nil &&
+			m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.Capabilities.Drop != nil {
+			recommendation.Container.CapabilitiesDrop = m.workloadHardeningCheck.Status.Recommendation.ContainerSecurityContexts.Capabilities.Drop
 		} else {
 			recommendation.Container.CapabilitiesDrop = []corev1.Capability{} // Default to dropping all capabilities if not set
 		}
@@ -449,274 +410,17 @@ func (r *WorkloadCheckManager) GetRecommendedSecurityContext() *checksv1alpha1.S
 
 }
 
-func (r *WorkloadCheckManager) GetCheckDuration() time.Duration {
+func (m *WorkloadCheckManager) GetCheckDuration() time.Duration {
 	// Default to 5 minutes if not specified
-	if r.workloadHardeningCheck.Spec.BaselineDuration == "" {
+	if m.workloadHardeningCheck.Spec.BaselineDuration == "" {
 		return 5 * time.Minute
 	}
 
 	// Parse the duration string
-	duration, err := time.ParseDuration(r.workloadHardeningCheck.Spec.BaselineDuration)
+	duration, err := time.ParseDuration(m.workloadHardeningCheck.Spec.BaselineDuration)
 	if err != nil {
 		return 5 * time.Minute // Fallback to default if parsing fails
 	}
 
 	return duration
-}
-
-func (r *WorkloadCheckManager) BaselineRecorded() bool {
-	if meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline)
-		return condition.Reason == checksv1alpha1.ReasonBaselineRecordingFinished
-	}
-	return false
-}
-
-func (r *WorkloadCheckManager) BaselineInProgress() bool {
-	if meta.IsStatusConditionFalse(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline)
-		return condition.Reason == checksv1alpha1.ReasonBaselineRecording
-	}
-	return false
-}
-
-func (r *WorkloadCheckManager) BaselineOverdue() bool {
-	// Check if the check is in progress
-	if r.BaselineInProgress() {
-		// Get the duration for the check
-		checkDuration := r.GetCheckDuration()
-
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline)
-
-		// Check if the check is overdue
-		if time.Since(condition.LastTransitionTime.Time) > checkDuration+1*time.Minute { // Adding a buffer of 1 minute
-			r.logger.V(2).Info("Baseline is overdue", "duration", checkDuration)
-			return true
-		}
-	}
-
-	return false
-}
-
-func (r *WorkloadCheckManager) FinalCheckRecorded() bool {
-	if meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck) {
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck)
-		return condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished
-	}
-	return false
-}
-
-func (r *WorkloadCheckManager) FinalCheckInProgress() bool {
-	if meta.IsStatusConditionFalse(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck) {
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck)
-		return condition.Reason == checksv1alpha1.ReasonCheckRecording
-	}
-	return false
-}
-
-func (r *WorkloadCheckManager) FinalCheckOverdue() bool {
-	// Check if the check is in progress
-	if r.FinalCheckInProgress() {
-		// Get the duration for the check
-		checkDuration := r.GetCheckDuration()
-
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck)
-
-		// Check if the check is overdue
-		if time.Since(condition.LastTransitionTime.Time) > checkDuration+1*time.Minute { // Adding a buffer of 1 minute
-			r.logger.V(2).Info("FinalCheck is overdue", "duration", checkDuration)
-			return true
-		}
-	}
-
-	return false
-}
-
-func (r *WorkloadCheckManager) CheckRecorded(checkType string) bool {
-	if meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
-		return condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished
-	}
-	return false
-}
-
-func (r *WorkloadCheckManager) CheckInProgress(checkType string) bool {
-	if meta.IsStatusConditionFalse(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
-		return condition.Reason == checksv1alpha1.ReasonCheckRecording
-	}
-	return false
-}
-
-func (r *WorkloadCheckManager) CheckOverdue(checkType string) bool {
-	// Check if the check is in progress
-	if r.CheckInProgress(checkType) {
-		// Get the duration for the check
-		checkDuration := r.GetCheckDuration()
-
-		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
-
-		// Check if the check is overdue
-		if time.Since(condition.LastTransitionTime.Time) > checkDuration+1*time.Minute { // Adding a buffer of 1 minute
-			r.logger.V(2).Info("Check is overdue", "checkType", checkType, "duration", checkDuration)
-			return true
-		}
-	}
-
-	return false
-}
-
-func (r *WorkloadCheckManager) AllChecksFinished() bool {
-
-	if !r.BaselineRecorded() {
-		return false // Baseline must be recorded before checks can be considered finished
-	}
-
-	if len(r.workloadHardeningCheck.Status.CheckRuns) == 1 {
-		// If only the baseline check is present, we consider it not finished
-		return false
-	}
-
-	requiredChecks := r.GetRequiredCheckRuns(context.Background())
-
-	for _, checkType := range requiredChecks {
-		// Check if the condition for the check is true
-		if !meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
-			r.logger.V(2).Info("Check not finished", "checkType", checkType)
-			return false // If any required check is not finished, return false
-		}
-	}
-
-	// If we reach here, it means no checks are running
-	return true
-}
-
-const (
-	// Sets runAsGroup and fsGroup to non-zero values
-	CheckTypeGroup = "group"
-	// Sets runAsUser to non-zero values, and runAsNonRoot to true
-	CheckTypeUser = "user"
-	// Sets readOnlyRootFilesystem to true
-	CheckTypeReadOnlyRootFile = "readOnlyRootFilesystem"
-	// Sets allowPrivilegeEscalation to false
-	CheckTypeAllowPrivilegeEscalation = "allowPrivilegeEscalation"
-	// Sets capabilities to drop all capabilities
-	CheckTypeDropCapabilities = "dropCapabilities"
-)
-
-func (r *WorkloadCheckManager) GetRequiredCheckRuns(ctx context.Context) []string {
-	checks := map[string]bool{}
-
-	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, r.workloadHardeningCheck.Namespace)
-	if err != nil {
-		r.logger.Error(err, "Failed to get workload under test")
-		return []string{}
-	}
-
-	// Determine the type of workload under test and extract the pod spec template
-	var podSpecTemplate *v1.PodSpec
-	switch v := (*workloadUnderTest).(type) {
-	case *appsv1.Deployment:
-		podSpecTemplate = &v.Spec.Template.Spec
-	case *appsv1.StatefulSet:
-		podSpecTemplate = &v.Spec.Template.Spec
-	case *appsv1.DaemonSet:
-		podSpecTemplate = &v.Spec.Template.Spec
-	}
-
-	if podSpecTemplate.SecurityContext != nil {
-		if podSpecTemplate.SecurityContext.RunAsGroup == nil || podSpecTemplate.SecurityContext.FSGroup == nil {
-			checks[CheckTypeGroup] = true
-		}
-		if podSpecTemplate.SecurityContext.RunAsUser == nil || podSpecTemplate.SecurityContext.RunAsNonRoot == nil {
-			checks[CheckTypeUser] = true
-		}
-	} else {
-		checks[CheckTypeGroup] = true
-		checks[CheckTypeUser] = true
-	}
-
-	for _, container := range podSpecTemplate.Containers {
-		if container.SecurityContext != nil {
-			if container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem {
-				checks[CheckTypeReadOnlyRootFile] = true
-			}
-			if container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
-				checks[CheckTypeAllowPrivilegeEscalation] = true
-			}
-			if container.SecurityContext.Capabilities == nil || len(container.SecurityContext.Capabilities.Drop) == 0 {
-				checks[CheckTypeDropCapabilities] = true
-			}
-		} else {
-			// If the container does not have a security context, we assume it needs all checks
-			checks[CheckTypeReadOnlyRootFile] = true
-			checks[CheckTypeAllowPrivilegeEscalation] = true
-			checks[CheckTypeDropCapabilities] = true
-		}
-	}
-
-	for key := range checks {
-		if meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, titleCase.String(key)+checksv1alpha1.ConditionTypeCheck) == nil {
-			// if the conditions is not found, we add it in unknown state
-			r.SetCondition(ctx, metav1.Condition{
-				Type:    titleCase.String(key) + checksv1alpha1.ConditionTypeCheck,
-				Status:  metav1.ConditionUnknown,
-				Reason:  checksv1alpha1.ReasonCheckNotStarted,
-				Message: fmt.Sprintf("Check %s has not been started yet", key),
-			})
-		} else if meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, titleCase.String(key)+checksv1alpha1.ConditionTypeCheck) {
-			// If the check is already recorded, we don't need to run it again
-			delete(checks, key)
-		}
-
-	}
-
-	return maps.Keys(checks)
-
-}
-
-func (r *WorkloadCheckManager) GetSecurityContextForCheckType(checkType string) *checksv1alpha1.SecurityContextDefaults {
-
-	baseSecurityContext := r.workloadHardeningCheck.Spec.SecurityContext
-	if baseSecurityContext == nil {
-		baseSecurityContext = &checksv1alpha1.SecurityContextDefaults{
-			Pod:       &checksv1alpha1.PodSecurityContextDefaults{},
-			Container: &checksv1alpha1.ContainerSecurityContextDefaults{},
-		}
-	}
-
-	switch checkType {
-	case CheckTypeGroup:
-		if baseSecurityContext.Pod.RunAsGroup == nil {
-			baseSecurityContext.Pod.RunAsGroup = ptr.To(int64(1000)) // Default group ID
-		}
-		baseSecurityContext.Container.RunAsGroup = baseSecurityContext.Pod.RunAsGroup
-		if baseSecurityContext.Container.RunAsGroup == nil {
-			baseSecurityContext.Container.RunAsGroup = ptr.To(int64(1000)) // Default group ID
-		}
-	case CheckTypeUser:
-		if baseSecurityContext.Pod.RunAsUser == nil {
-			baseSecurityContext.Pod.RunAsUser = ptr.To(int64(1000)) // Default user ID
-		}
-		if baseSecurityContext.Pod.RunAsNonRoot == nil {
-			baseSecurityContext.Pod.RunAsNonRoot = ptr.To(true) // Default to non-root
-		}
-		baseSecurityContext.Container.RunAsUser = baseSecurityContext.Pod.RunAsUser
-		baseSecurityContext.Container.RunAsNonRoot = baseSecurityContext.Pod.RunAsNonRoot
-	case CheckTypeReadOnlyRootFile:
-		if baseSecurityContext.Container.ReadOnlyRootFilesystem == nil {
-			baseSecurityContext.Container.ReadOnlyRootFilesystem = ptr.To(true) // Default to read-only root filesystem
-		}
-	case CheckTypeAllowPrivilegeEscalation:
-		if baseSecurityContext.Container.AllowPrivilegeEscalation == nil {
-			baseSecurityContext.Container.AllowPrivilegeEscalation = ptr.To(false) // Default to no privilege escalation
-		}
-	case CheckTypeDropCapabilities: // This could be made more granular in the future
-		if baseSecurityContext.Container.CapabilitiesDrop == nil {
-			baseSecurityContext.Container.CapabilitiesDrop = []corev1.Capability{"ALL"}
-		}
-	}
-
-	return baseSecurityContext
-
 }
