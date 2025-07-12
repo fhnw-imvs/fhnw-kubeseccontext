@@ -34,7 +34,7 @@ import (
 // Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
 var titleCase = cases.Title(language.English)
 
-type WorkloadCheckHandler struct {
+type WorkloadCheckManager struct {
 	client.Client
 
 	valKeyClient *valkey.ValkeyClient
@@ -44,7 +44,7 @@ type WorkloadCheckHandler struct {
 	workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck
 }
 
-func NewWorkloadCheckHandler(ctx context.Context, valKeyClient *valkey.ValkeyClient, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadCheckHandler {
+func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyClient, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadCheckManager {
 
 	scheme := runtime.NewScheme()
 
@@ -63,7 +63,7 @@ func NewWorkloadCheckHandler(ctx context.Context, valKeyClient *valkey.ValkeyCli
 		return nil
 	}
 
-	return &WorkloadCheckHandler{
+	return &WorkloadCheckManager{
 		Client:                 cl,
 		logger:                 log.FromContext(ctx).WithName("WorkloadHandler"),
 		workloadHardeningCheck: workloadHardeningCheck,
@@ -72,7 +72,7 @@ func NewWorkloadCheckHandler(ctx context.Context, valKeyClient *valkey.ValkeyCli
 
 }
 
-func (h *WorkloadCheckHandler) GetPodSpecTemplate(ctx context.Context, namespace string) (*v1.PodSpec, error) {
+func (h *WorkloadCheckManager) GetPodSpecTemplate(ctx context.Context, namespace string) (*v1.PodSpec, error) {
 
 	workloadUnderTestPtr, err := h.GetWorkloadUnderTest(ctx, namespace)
 	if err != nil {
@@ -95,7 +95,7 @@ func (h *WorkloadCheckHandler) GetPodSpecTemplate(ctx context.Context, namespace
 	return podSpecTemplate, nil
 }
 
-func (h *WorkloadCheckHandler) GetWorkloadUnderTest(ctx context.Context, namespace string) (*client.Object, error) {
+func (h *WorkloadCheckManager) GetWorkloadUnderTest(ctx context.Context, namespace string) (*client.Object, error) {
 
 	name := h.workloadHardeningCheck.Spec.TargetRef.Name
 	kind := h.workloadHardeningCheck.Spec.TargetRef.Kind
@@ -134,7 +134,7 @@ func (h *WorkloadCheckHandler) GetWorkloadUnderTest(ctx context.Context, namespa
 	return &workloadUnderTest, nil
 }
 
-func (h *WorkloadCheckHandler) VerifyRunning(ctx context.Context, namespace string) (bool, error) {
+func (h *WorkloadCheckManager) VerifyRunning(ctx context.Context, namespace string) (bool, error) {
 	workloadUnderTestPtr, err := h.GetWorkloadUnderTest(ctx, namespace)
 	if err != nil {
 		h.logger.Error(err, "failed to get workload under test")
@@ -157,7 +157,7 @@ func VerifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {
 	return false, fmt.Errorf("kind of workloadUnderTest not supported")
 }
 
-func (r *WorkloadCheckHandler) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
+func (r *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
 	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, r.workloadHardeningCheck.GetNamespace())
 	if err != nil {
 		return nil, err
@@ -177,7 +177,7 @@ func (r *WorkloadCheckHandler) GetLabelSelector(ctx context.Context) (labels.Sel
 	return metav1.LabelSelectorAsSelector(labelSelector)
 }
 
-func (r *WorkloadCheckHandler) SetCondition(ctx context.Context, condition metav1.Condition) error {
+func (r *WorkloadCheckManager) SetCondition(ctx context.Context, condition metav1.Condition) error {
 
 	log := log.FromContext(ctx)
 
@@ -207,7 +207,7 @@ func (r *WorkloadCheckHandler) SetCondition(ctx context.Context, condition metav
 	return err
 }
 
-func (r *WorkloadCheckHandler) AnalyzeCheckRuns(ctx context.Context) error {
+func (r *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 	log := log.FromContext(ctx)
 
 	// Get results from the workload hardening check from ValKey
@@ -330,7 +330,7 @@ func (r *WorkloadCheckHandler) AnalyzeCheckRuns(ctx context.Context) error {
 
 }
 
-func (r *WorkloadCheckHandler) SetRecommendation(ctx context.Context) error {
+func (r *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
 
 	securityContexts := map[string]*checksv1alpha1.SecurityContextDefaults{}
 
@@ -391,7 +391,7 @@ func (r *WorkloadCheckHandler) SetRecommendation(ctx context.Context) error {
 
 }
 
-func (r *WorkloadCheckHandler) RecommendationExists() bool {
+func (r *WorkloadCheckManager) RecommendationExists() bool {
 	// Check if the recommendation is set in the status
 	if r.workloadHardeningCheck.Status.Recommendation == nil {
 		return false
@@ -406,7 +406,7 @@ func (r *WorkloadCheckHandler) RecommendationExists() bool {
 	return true
 }
 
-func (r *WorkloadCheckHandler) GetRecommendedSecurityContext() *checksv1alpha1.SecurityContextDefaults {
+func (r *WorkloadCheckManager) GetRecommendedSecurityContext() *checksv1alpha1.SecurityContextDefaults {
 	// If the recommendation is not set, return nil
 	if !r.RecommendationExists() {
 		return nil
@@ -449,7 +449,7 @@ func (r *WorkloadCheckHandler) GetRecommendedSecurityContext() *checksv1alpha1.S
 
 }
 
-func (r *WorkloadCheckHandler) GetCheckDuration() time.Duration {
+func (r *WorkloadCheckManager) GetCheckDuration() time.Duration {
 	// Default to 5 minutes if not specified
 	if r.workloadHardeningCheck.Spec.BaselineDuration == "" {
 		return 5 * time.Minute
@@ -464,7 +464,7 @@ func (r *WorkloadCheckHandler) GetCheckDuration() time.Duration {
 	return duration
 }
 
-func (r *WorkloadCheckHandler) BaselineRecorded() bool {
+func (r *WorkloadCheckManager) BaselineRecorded() bool {
 
 	if meta.IsStatusConditionTrue(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
 		condition := meta.FindStatusCondition(r.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline)
@@ -473,7 +473,7 @@ func (r *WorkloadCheckHandler) BaselineRecorded() bool {
 	return false
 }
 
-func (r *WorkloadCheckHandler) AllChecksFinished() bool {
+func (r *WorkloadCheckManager) AllChecksFinished() bool {
 
 	if !r.BaselineRecorded() {
 		return false // Baseline must be recorded before checks can be considered finished
@@ -511,7 +511,7 @@ const (
 	CheckTypeDropCapabilities = "dropCapabilities"
 )
 
-func (r *WorkloadCheckHandler) GetRequiredCheckRuns(ctx context.Context) []string {
+func (r *WorkloadCheckManager) GetRequiredCheckRuns(ctx context.Context) []string {
 	checks := map[string]bool{}
 
 	workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, r.workloadHardeningCheck.Namespace)
@@ -582,7 +582,7 @@ func (r *WorkloadCheckHandler) GetRequiredCheckRuns(ctx context.Context) []strin
 
 }
 
-func (r *WorkloadCheckHandler) GetSecurityContextForCheckType(checkType string) *checksv1alpha1.SecurityContextDefaults {
+func (r *WorkloadCheckManager) GetSecurityContextForCheckType(checkType string) *checksv1alpha1.SecurityContextDefaults {
 
 	baseSecurityContext := r.workloadHardeningCheck.Spec.SecurityContext
 	if baseSecurityContext == nil {
