@@ -50,6 +50,8 @@ var titleCase = cases.Title(language.English)
 
 func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
 
+	log := log.FromContext(ctx).WithName("WorkloadHandler")
+
 	conditionType := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
 	if strings.Contains(strings.ToLower(checkType), "baseline") {
 		conditionType = checksv1alpha1.ConditionTypeBaseline
@@ -65,20 +67,20 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to get Kubernetes config")
+		log.Error(err, "failed to get Kubernetes config")
 		return nil
 	}
 
 	cl, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to create Kubernetes client")
+		log.Error(err, "failed to create Kubernetes client")
 		return nil
 	}
 
 	return &CheckRunner{
 		Client:                 cl,
 		checkManager:           wh.NewWorkloadCheckManager(ctx, valKeyClient, workloadHardeningCheck),
-		logger:                 log.FromContext(ctx).WithName("WorkloadHandler"),
+		logger:                 log,
 		valKeyClient:           valKeyClient,
 		recorder:               recorder,
 		workloadHardeningCheck: workloadHardeningCheck.DeepCopy(),
@@ -108,14 +110,12 @@ func (r *CheckRunner) namespaceExists(ctx context.Context, namespaceName string)
 
 // createCheckNamespace clones the namespace of the workload hardening check target workload into a new namespace.
 func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
-	log := log.FromContext(ctx)
-
 	targetNamespace := r.generateTargetNamespaceName()
 
 	err := CloneNamespace(ctx, r.workloadHardeningCheck.Namespace, targetNamespace, r.workloadHardeningCheck.Spec.Suffix)
 
 	if err != nil {
-		log.Error(err, fmt.Sprintf("failed to clone namespace %s", r.workloadHardeningCheck.Namespace))
+		r.logger.Error(err, fmt.Sprintf("failed to clone namespace %s", r.workloadHardeningCheck.Namespace))
 		return err
 	}
 
@@ -123,15 +123,14 @@ func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
 	err = r.Get(ctx, client.ObjectKey{Name: targetNamespace}, targetNs)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
-			log.Error(err, "target namespace not found after cloning")
+			r.logger.Error(err, "target namespace not found after cloning")
 			return fmt.Errorf("target namespace %s not found after cloning", targetNamespace)
 		}
 		// Error reading the object - requeue the request.
-		log.Error(err, "failed to get target namespace after cloning, requeuing")
+		r.logger.Error(err, "failed to get target namespace after cloning")
 		return fmt.Errorf("failed to get target namespace %s after cloning: %w", targetNamespace, err)
 	}
 
-	// ToDo: Reactivate!
 	// Set the owner reference of the cloned namespace to the workload hardening check
 	err = ctrl.SetControllerReference(
 		r.workloadHardeningCheck,
@@ -140,7 +139,7 @@ func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
 	)
 
 	if err != nil {
-		log.Error(err, "failed to set controller reference for target namespace")
+		r.logger.Error(err, "failed to set controller reference for target namespace")
 	}
 
 	return nil
@@ -149,7 +148,9 @@ func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
 
 func (r *CheckRunner) deleteCheckNamespace(ctx context.Context) error {
 	namespaceName := r.generateTargetNamespaceName()
-	log := log.FromContext(ctx).WithValues("namespace", namespaceName)
+
+	log := r.logger.WithValues("namespace", namespaceName)
+
 	targetNs := &corev1.Namespace{}
 	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
 	if err != nil {
@@ -198,7 +199,7 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 	})
 
 	if err != nil {
-		log.FromContext(ctx).Error(err, "Failed to set condition for check")
+		r.logger.Error(err, "Failed to set condition for check")
 	}
 
 	checkRun := checksv1alpha1.CheckRun{
@@ -212,10 +213,10 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
 			if apierrors.IsNotFound(err) {
 				// workloadHardeningCheck resource was deleted, while a check was running
-				log.FromContext(ctx).Info("WorkloadHardeningCheck not found, skipping status update")
+				r.logger.Info("WorkloadHardeningCheck not found, skipping status update")
 				return nil // If the resource is not found, we can skip the update
 			}
-			log.FromContext(ctx).Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+			r.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 		}
 
 		// Baseline and final checks are handled differently
@@ -270,11 +271,14 @@ func (r *CheckRunner) setStatusRunning(ctx context.Context, message string) {
 
 func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alpha1.SecurityContextDefaults) {
 	var conditionReason string
-	log := log.FromContext(ctx).WithValues("checkType", r.checkType)
 
 	targetNamespaceName := r.generateTargetNamespaceName()
 
-	log = log.WithValues("targetNamespace", targetNamespaceName)
+	log := r.logger.WithValues(
+		"targetNamespace", targetNamespaceName,
+		"checkType", r.checkType,
+		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
+	)
 
 	// Check if the target namespace already exists, otherwise create it
 	if r.namespaceExists(ctx, targetNamespaceName) {
@@ -283,10 +287,12 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 			r.conditionType,
 			metav1.ConditionUnknown,
 		) {
-			log.V(1).Info(
+			log.Info(
 				"Target namespace already exists, and check is in unknown state. Most likely a previous run failed",
 			)
 		}
+
+		// ToDo: Should we just delete it, and wait for it to be gone, and then create it again?
 
 	} else {
 
@@ -308,22 +314,17 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	// Fetch the workload we want to test, make sure we fetch it from the target namespace
 	workloadUnderTest, err := r.checkManager.GetWorkloadUnderTest(ctx, targetNamespaceName)
 	if err != nil {
-		log.Error(err, "failed to get workload under test",
-			"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-		)
+		log.Error(err, "failed to get workload under test")
+		r.setStatusFailed(ctx, "Failed to get workload under test")
 		return
 	}
 
-	log.Info("applying security context to workload under test",
-		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-	)
+	log.Info("applying security context to workload under test")
 
 	if securityContext != nil {
 		err = wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
 		if err != nil {
-			log.Error(err, "failed to apply security context to workload under test",
-				"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-			)
+			log.Error(err, "failed to apply security context to workload under test")
 			r.setStatusFailed(ctx, "Failed to apply security context to workload")
 
 			return
@@ -332,16 +333,12 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 
 	err = r.Update(ctx, *workloadUnderTest)
 	if err != nil {
-		log.Error(err, "failed to update workload under test with security context",
-			"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-		)
+		log.Error(err, "failed to update workload under test with security context")
 		r.setStatusFailed(ctx, "Failed to update security context on workload")
 
 		return
 	}
-	log.Info("applied security context to workload under test",
-		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-	)
+	log.V(2).Info("applied security context to workload under test")
 
 	// ToDo: detect if pods are able to get into a running state, otherwise we cannot record metrics and it's clear this has failed
 	running := false
@@ -351,11 +348,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		running, _ = wh.VerifySuccessfullyRunning(*workloadUnderTest)
 
 		if time.Now().After(startTime.Add(2 * time.Minute)) {
-			log.Error(fmt.Errorf("timeout while waiting for workload to be running"), "timeout while waiting for workload to be running",
-				"targetNamespace", targetNamespaceName,
-				"checkType", r.checkType,
-				"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-			)
+			log.Error(fmt.Errorf("timeout while waiting for workload to be running"), "timeout while waiting for workload to be running")
 			r.setStatusFailed(ctx, "Timeout while waiting for workload to be running")
 
 			r.recorder.Event(
@@ -372,7 +365,6 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 			logs, err := r.recordLogs(ctx, true)
 			if err != nil {
 				log.Error(err, "failed to record logs")
-				r.setStatusFailed(ctx, "Failed to record logs")
 				return
 			}
 
@@ -401,26 +393,22 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 			return
 		}
 		if !running {
-			log.V(1).Info("workload is not running yet, waiting for it to be ready",
-				"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-			)
+			log.V(2).Info("workload is not running yet, waiting for it to be ready")
 			time.Sleep(5 * time.Second) // Wait for 5 seconds before checking again
 		}
 	}
 
-	log.Info("workload is running",
-		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-	)
+	log.Info("workload is running")
 
-	r.setStatusRunning(ctx, "Recording signals")
+	r.setStatusRunning(ctx, "Recording metrics")
 
 	// start recording metrics for target workload
 	recordedMetrics, err := r.recordMetrics(ctx)
 
 	if err != nil {
-		log.Error(err, "failed to record signals")
+		log.Error(err, "failed to record metrics")
 
-		r.setStatusFailed(ctx, "Failed to record signals")
+		r.setStatusFailed(ctx, "Failed to record metrics")
 
 		return
 	}
@@ -465,15 +453,11 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		corev1.EventTypeNormal,
 		conditionReason,
 		fmt.Sprintf(
-			"Recorded %sCheck signals in namespace %s",
+			"Recorded %sCheck in namespace %s",
 			r.checkType,
 			targetNamespaceName,
 		),
 	)
-
-	if err != nil {
-		log.Error(err, "failed to set condition for check")
-	}
 
 	// Cleanup: delete the check namespace after recording
 	err = r.deleteCheckNamespace(ctx)
@@ -486,7 +470,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 
 func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUsageRecord, error) {
 	targetNamespace := r.generateTargetNamespaceName()
-	log := log.FromContext(ctx).WithValues(
+	log := r.logger.WithValues(
 		"targetNamespace", targetNamespace,
 		"checkType", r.checkType,
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
@@ -586,7 +570,7 @@ func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUs
 
 func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string][]string, error) {
 	targetNamespace := r.generateTargetNamespaceName()
-	log := log.FromContext(ctx).WithValues(
+	log := r.logger.WithValues(
 		"targetNamespace", targetNamespace,
 		"checkType", r.checkType,
 		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
