@@ -44,6 +44,7 @@ type WorkloadCheckManager struct {
 
 func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyClient, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadCheckManager {
 
+	log := log.FromContext(ctx).WithName("WorkloadManager")
 	scheme := runtime.NewScheme()
 
 	clientgoscheme.AddToScheme(scheme)
@@ -51,19 +52,19 @@ func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyCli
 
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to get Kubernetes config")
+		log.Error(err, "failed to get Kubernetes config")
 		return nil
 	}
 
 	cl, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
-		log.FromContext(ctx).Error(err, "failed to create Kubernetes client")
+		log.Error(err, "failed to create Kubernetes client")
 		return nil
 	}
 
 	return &WorkloadCheckManager{
 		Client:                 cl,
-		logger:                 log.FromContext(ctx).WithName("WorkloadManager"),
+		logger:                 log,
 		workloadHardeningCheck: workloadHardeningCheck.DeepCopy(),
 		valKeyClient:           valKeyClient,
 	}
@@ -184,27 +185,26 @@ func (m *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Sel
 }
 
 func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
-	log := log.FromContext(ctx)
 
 	// Get results from the workload hardening check from ValKey
 	baselineRecording, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, "baseline"))
 	if err != nil {
-		log.Error(err, "Failed to get baseline recording from ValKey")
+		m.logger.Error(err, "Failed to get baseline recording from ValKey")
 		return fmt.Errorf("failed to get baseline recording from ValKey: %w", err)
 	}
 	if baselineRecording == nil {
-		log.Info("No baseline recording found, skipping analysis")
+		m.logger.Info("No baseline recording found, skipping analysis")
 		return nil
 	}
 
 	// Get results from the workload hardening check from ValKey
 	baselineRecording2, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, "baseline-2"))
 	if err != nil {
-		log.Error(err, "Failed to get baseline recording from ValKey")
+		m.logger.Error(err, "Failed to get baseline recording from ValKey")
 		return fmt.Errorf("failed to get baseline recording from ValKey: %w", err)
 	}
 	if baselineRecording == nil {
-		log.Info("No baseline recording found, skipping analysis")
+		m.logger.Info("No baseline recording found, skipping analysis")
 		return nil
 	}
 
@@ -224,7 +224,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			// Check if the container already has a drainMiner, if not, create one
 			drainMiner, exists := drainMinerPerContainer[containerName]
 			if !exists {
-				log.V(2).Info("No baseline found for pod", "podName", containerName)
+				m.logger.V(2).Info("No baseline found for pod", "podName", containerName)
 				drainMiner = orakel.NewDrainMiner()
 				drainMinerPerContainer[containerName] = drainMiner
 			}
@@ -236,7 +236,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 	checkRuns := m.workloadHardeningCheck.Status.CheckRuns
 	// Baseline is also listed as check run
 	if len(checkRuns) <= 0 {
-		log.V(2).Info("No check runs found in workload hardening check status, skipping analysis")
+		m.logger.V(2).Info("No check runs found in workload hardening check status, skipping analysis")
 		return nil
 	}
 	updatedCheckRuns := make(map[string]checksv1alpha1.CheckRun, len(checkRuns))
@@ -246,7 +246,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			continue // Skip baseline check run
 		}
 
-		log.V(2).Info("Analyzing check run", "checkRun", checkRun.Name)
+		m.logger.V(2).Info("Analyzing check run", "checkRun", checkRun.Name)
 
 		// Get the recording for this check run
 		checkRecording, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, checkRun.Name))
@@ -261,20 +261,20 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 		for containerName, logs := range checkRecording.Logs {
 			drainMiner, exists := drainMinerPerContainer[containerName]
 			if !exists {
-				log.Info("No baseline found for pod", "podName", containerName)
+				m.logger.Info("No baseline found for pod", "podName", containerName)
 				continue
 			}
 
 			anomalies, _ := drainMiner.AnalyzeTarget(logs)
 			if len(anomalies) > 0 {
-				log.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
+				m.logger.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
 				checkSuccessful = false
 				if checkRun.Anomalies == nil {
 					checkRun.Anomalies = make(map[string][]string)
 				}
 				checkRun.Anomalies[containerName] = anomalies[len(anomalies)-5:] // Store only the last 5 anomalies for brevity
 			} else {
-				log.Info("No anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName)
+				m.logger.Info("No anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName)
 			}
 		}
 
@@ -289,10 +289,10 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
 			if apierrors.IsNotFound(err) {
 				// workloadHardeningCheck resource was deleted, while a check was running
-				log.Info("WorkloadHardeningCheck not found, skipping check run update")
+				m.logger.Info("WorkloadHardeningCheck not found, skipping check run update")
 				return nil // If the resource is not found, we can skip the update
 			}
-			log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+			m.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 			return fmt.Errorf("failed to re-fetch WorkloadHardeningCheck: %w", err)
 		}
 

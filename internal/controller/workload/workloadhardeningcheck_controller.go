@@ -232,7 +232,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	// If all checks are finished and the results are analyzed, create a final check run using the recommended security context
 	if checkManager.RecommendationExists() && !checkManager.FinalCheckRecorded() {
 		// !meta.IsStatusConditionTrue also returns true if the condition is not set at all !!
-		log.Info("Final check run with recommended security context")
+		log.Info("Starting Final check run with recommended security context")
 
 		securityContext := checkManager.GetRecommendedSecurityContext()
 		finalCheckRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "Final")
