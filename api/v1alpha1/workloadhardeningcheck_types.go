@@ -170,9 +170,10 @@ const (
 	// Represents a running baseline recording
 	ConditionTypeBaseline = "Baseline"
 	// Represents ongoing check jobs, this state will be used until all checks are finished
-	ConditionTypeCheck = "Check"
+	ConditionTypeCheck      = "Check"
+	ConditionTypeFinalCheck = "FinalCheck"
 	// All checks are finished, and the results are being analyzed, and the recommendations are being generated
-	ConditionTypeAnalysis = "Analyzing"
+	ConditionTypeAnalysis = "CheckResultAnalysis"
 	// All checks are finished, the comparison of the baseline and the checks is done, and the results are available
 	ConditionTypeFinished = "Finished"
 

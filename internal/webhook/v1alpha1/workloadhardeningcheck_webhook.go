@@ -105,14 +105,14 @@ func (v *WorkloadHardeningCheckCustomValidator) ValidateCreate(ctx context.Conte
 	}
 
 	// ValKeyClient is not used in this validation, so we pass nil
-	workloadHandler := workload.NewWorkloadCheckManager(ctx, nil, workloadhardeningcheck)
-	if workloadHandler == nil {
+	workloadManager := workload.NewWorkloadCheckManager(ctx, nil, workloadhardeningcheck)
+	if workloadManager == nil {
 		log.Error(fmt.Errorf("failed to create workload handler"), "WorkloadHandler creation failed")
 		return nil, fmt.Errorf("failed to create workload handler for WorkloadHardeningCheck")
 	}
 
 	// Verify that the target workload exists
-	if running, err := workloadHandler.VerifyRunning(ctx, workloadhardeningcheck.GetNamespace()); err != nil {
+	if running, err := workloadManager.VerifyRunning(ctx, workloadhardeningcheck.GetNamespace()); err != nil {
 		log.Error(err, "Failed to verify if target workload is running", "name", workloadhardeningcheck.GetName())
 		return nil, fmt.Errorf("failed to verify if target workload is running: %w", err)
 	} else if !running {
