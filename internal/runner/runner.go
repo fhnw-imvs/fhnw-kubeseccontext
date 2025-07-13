@@ -288,13 +288,17 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 			metav1.ConditionUnknown,
 		) {
 			log.Info(
-				"Target namespace already exists, and check is in unknown state. Most likely a previous run failed",
+				"Target namespace already exists, and check is in unknown state indicating a previous run was not finished",
 			)
+
+			r.deleteCheckNamespace(ctx)
 		}
 
 		// ToDo: Should we just delete it, and wait for it to be gone, and then create it again?
 
-	} else {
+	}
+
+	if !r.namespaceExists(ctx, targetNamespaceName) {
 
 		// clone into target namespace
 		err := r.createCheckNamespace(ctx)
@@ -319,9 +323,8 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		return
 	}
 
-	log.Info("applying security context to workload under test")
-
 	if securityContext != nil {
+		log.V(1).Info("applying security context to workload under test")
 		err = wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
 		if err != nil {
 			log.Error(err, "failed to apply security context to workload under test")

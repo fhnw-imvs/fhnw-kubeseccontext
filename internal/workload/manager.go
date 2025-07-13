@@ -151,19 +151,6 @@ func (m *WorkloadCheckManager) VerifyRunning(ctx context.Context, namespace stri
 	return VerifySuccessfullyRunning(*workloadUnderTestPtr)
 }
 
-func VerifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {
-	switch v := workloadUnderTest.(type) {
-	case *appsv1.Deployment:
-		return *v.Spec.Replicas == v.Status.ReadyReplicas, nil
-	case *appsv1.StatefulSet:
-		return *v.Spec.Replicas == v.Status.ReadyReplicas, nil
-	case *appsv1.DaemonSet:
-		return v.Status.DesiredNumberScheduled == v.Status.NumberReady, nil
-	}
-
-	return false, fmt.Errorf("kind of workloadUnderTest not supported")
-}
-
 func (m *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
 	workloadUnderTest, err := m.GetWorkloadUnderTest(ctx, m.workloadHardeningCheck.GetNamespace())
 	if err != nil {
@@ -257,7 +244,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			return fmt.Errorf("no recording found for check run %s", checkRun.Name)
 		}
 
-		checkSuccessful := true
+		checkSuccessful := *checkRun.CheckSuccessfull
 		for containerName, logs := range checkRecording.Logs {
 			drainMiner, exists := drainMinerPerContainer[containerName]
 			if !exists {
@@ -315,6 +302,9 @@ func (m *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
 		if checkRun.Name == "baseline" {
 			continue // Skip baseline check
 		}
+		if checkRun.CheckSuccessfull != nil && !*checkRun.CheckSuccessfull {
+			continue // Skip check runs that were not successful
+		}
 
 		securityContexts[checkRun.Name] = checkRun.SecurityContext
 	}
@@ -343,7 +333,7 @@ func (m *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
 	}
 
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
-		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
+		// Awlays re-fetch the workload hardening check Custom before updating the status
 		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
 			m.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 			return fmt.Errorf("failed to re-fetch WorkloadHardeningCheck: %w", err)
@@ -423,4 +413,17 @@ func (m *WorkloadCheckManager) GetCheckDuration() time.Duration {
 	}
 
 	return duration
+}
+
+func VerifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {
+	switch v := workloadUnderTest.(type) {
+	case *appsv1.Deployment:
+		return *v.Spec.Replicas == v.Status.ReadyReplicas, nil
+	case *appsv1.StatefulSet:
+		return *v.Spec.Replicas == v.Status.ReadyReplicas, nil
+	case *appsv1.DaemonSet:
+		return v.Status.DesiredNumberScheduled == v.Status.NumberReady, nil
+	}
+
+	return false, fmt.Errorf("kind of workloadUnderTest not supported")
 }

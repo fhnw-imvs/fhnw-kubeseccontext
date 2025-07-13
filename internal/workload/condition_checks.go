@@ -10,12 +10,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func (m *WorkloadCheckManager) SetCondition(ctx context.Context, condition metav1.Condition) error {
-
-	log := log.FromContext(ctx)
 
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 
@@ -23,10 +20,10 @@ func (m *WorkloadCheckManager) SetCondition(ctx context.Context, condition metav
 		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
 			if apierrors.IsNotFound(err) {
 				// workloadHardeningCheck resource was deleted, while a check was running
-				log.Info("WorkloadHardeningCheck not found, skipping condition update")
+				m.logger.Info("WorkloadHardeningCheck not found, skipping condition update")
 				return nil // If the resource is not found, we can skip the update
 			}
-			log.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+			m.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
 			return err
 		}
 

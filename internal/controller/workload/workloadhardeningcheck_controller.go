@@ -142,7 +142,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			Message: "Reconciliation started",
 		})
 		if err != nil {
-			return ctrl.Result{}, err
+			return ctrl.Result{RequeueAfter: 10 * time.Minute}, err
 		}
 	}
 
@@ -187,7 +187,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 				Reason:  checksv1alpha1.ReasonAnalysisFailed,
 				Message: "Error analyzing check runs",
 			})
-			return ctrl.Result{}, nil
+			return ctrl.Result{RequeueAfter: 10 * time.Minute}, nil
 		}
 
 		checkManager.SetRecommendation(ctx)
@@ -215,7 +215,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		err = checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
-			Reason:  checksv1alpha1.ReasonPreparationFailed,
+			Reason:  "FinalCheckFailed",
 			Message: "Final check run failed, cannot proceed with checks",
 		})
 
@@ -225,7 +225,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	// If the final check run is already running, we need to wait for it to finish
 	if checkManager.FinalCheckInProgress() {
 		log.Info("Final check run is still running, waiting for it to finish")
-		// ToDo: Determine if the final check should be requeued. Remove condition & delete namespace
+
 		return ctrl.Result{RequeueAfter: checkManager.GetCheckDuration() / 2}, nil
 	}
 
@@ -255,17 +255,17 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 	if !originalRunnig {
-		log.Info("Original workload is not running, flagging as failed")
+		log.Info("Original workload is not running, marking as failed")
 		err = checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
-			Reason:  checksv1alpha1.ReasonPreparationFailed,
+			Reason:  "OriginalNotRunning",
 			Message: "Original workload is not running, cannot proceed with checks",
 		})
 		if err != nil {
 			log.Error(err, "Failed to set condition for not running workload")
 		}
-		return ctrl.Result{RequeueAfter: 10 * time.Minute}, nil
+		return ctrl.Result{}, nil
 	}
 
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
@@ -277,6 +277,16 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	if checkManager.BaselineInProgress() {
 		log.Info("Baseline not recorded yet, waiting for baseline recording to finish")
 		// If the baseline is not recorded yet, we need to wait for the baseline recording to finish
+		if checkManager.BaselineOverdue() {
+			log.Info("Baseline recording is overdue, requeuing reconciliation")
+			checkManager.SetCondition(ctx, metav1.Condition{
+				Type:    checksv1alpha1.ConditionTypeBaseline,
+				Status:  metav1.ConditionUnknown,
+				Reason:  checksv1alpha1.ReasonRequeue,
+				Message: "Baseline recording is still running, but last transition time is older than 2x duration, requeuing",
+			})
+		}
+
 		return ctrl.Result{RequeueAfter: duration / 2}, nil
 	}
 
@@ -303,8 +313,6 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		// Requeue the reconciliation after the baseline duration, to continue with the next steps
 		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
 	}
-
-	// ToDo: Flag the check as failed and if the baseline never reaches the finished state, we can assume that the workload is not running or the baseline recording failed
 
 	// If we are here, it means that the baseline recording is done
 	// We can now start recording the workload under test with different security context configurations
