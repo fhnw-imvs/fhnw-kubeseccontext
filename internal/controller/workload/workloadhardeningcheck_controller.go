@@ -255,17 +255,35 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{}, err
 	}
 	if !originalRunnig {
-		log.Info("Original workload is not running, marking as failed")
-		err = checkManager.SetCondition(ctx, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionTrue,
-			Reason:  "OriginalNotRunning",
-			Message: "Original workload is not running, cannot proceed with checks",
-		})
-		if err != nil {
-			log.Error(err, "Failed to set condition for not running workload")
+
+		// If the original workload is not running, and it's the first time we are checking this, we will set the condition to Unknown, and retry after 1 minute
+		// If the condition is already set to Unknown, this is the second attempt, and we consider it a failure
+		if meta.IsStatusConditionPresentAndEqual(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeFinished, metav1.ConditionUnknown) {
+			log.Info("Original workload is not running, marking as failed")
+			err = checkManager.SetCondition(ctx, metav1.Condition{
+				Type:    checksv1alpha1.ConditionTypeFinished,
+				Status:  metav1.ConditionFalse,
+				Reason:  "OriginalNotRunning",
+				Message: "Original workload is not running, cannot proceed with checks",
+			})
+			if err != nil {
+				log.Error(err, "Failed to set condition for not running workload")
+			}
+			return ctrl.Result{}, nil
+		} else {
+			log.Info("Original workload is not running, requeuing")
+			err = checkManager.SetCondition(ctx, metav1.Condition{
+				Type:    checksv1alpha1.ConditionTypeFinished,
+				Status:  metav1.ConditionUnknown,
+				Reason:  "OriginalNotRunning",
+				Message: "Original workload is not running, will retry in 1 minute",
+			})
+			if err != nil {
+				log.Error(err, "Failed to set condition for not running workload")
+			}
+			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 		}
-		return ctrl.Result{}, nil
+
 	}
 
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
