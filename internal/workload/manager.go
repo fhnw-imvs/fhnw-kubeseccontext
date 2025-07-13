@@ -226,9 +226,11 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 		m.logger.V(2).Info("No check runs found in workload hardening check status, skipping analysis")
 		return nil
 	}
-	updatedCheckRuns := make(map[string]checksv1alpha1.CheckRun, len(checkRuns))
+	updatedCheckRuns := make(map[string]*checksv1alpha1.CheckRun, len(checkRuns))
 	// Iterate over all check runs and analyze the logs
 	for _, checkRun := range checkRuns {
+		checkRun := checkRun.DeepCopy() // Create a copy to avoid modifying the original
+
 		if strings.Contains(checkRun.Name, "baseline") {
 			continue // Skip baseline check run
 		}
@@ -244,7 +246,10 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			return fmt.Errorf("no recording found for check run %s", checkRun.Name)
 		}
 
-		checkSuccessful := *checkRun.CheckSuccessfull
+		checkSuccessful := true
+		if checkRun.CheckSuccessfull != nil {
+			checkSuccessful = *checkRun.CheckSuccessfull // Use the existing value if it exists
+		}
 		for containerName, logs := range checkRecording.Logs {
 			drainMiner, exists := drainMinerPerContainer[containerName]
 			if !exists {
@@ -259,7 +264,12 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 				if checkRun.Anomalies == nil {
 					checkRun.Anomalies = make(map[string][]string)
 				}
-				checkRun.Anomalies[containerName] = anomalies[len(anomalies)-5:] // Store only the last 5 anomalies for brevity
+				if len(anomalies) > 5 {
+					m.logger.V(2).Info("Trimming anomalies to last 5", "checkRun", checkRun.Name, "containerName", containerName)
+					// last 5 anomalies
+					anomalies = anomalies[len(anomalies)-5:]
+				}
+				checkRun.Anomalies[containerName] = anomalies
 			} else {
 				m.logger.Info("No anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName)
 			}

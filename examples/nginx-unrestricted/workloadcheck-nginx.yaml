@@ -1,0 +1,11 @@
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  name: nginx-unrestricted
+  namespace: oof-nginx-unrestricted
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-unrestricted
+  baselineDuration: 1m

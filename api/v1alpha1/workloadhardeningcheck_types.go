@@ -217,11 +217,11 @@ type WorkloadHardeningCheckStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 
 	// BaselineRuns contains a list of all check runs that were executed as part of the baseline recording.
-	BaselineRuns []CheckRun `json:"baselineRuns,omitempty"`
+	BaselineRuns []*CheckRun `json:"baselineRuns,omitempty"`
 
 	// A list of all check runs that were executed as part of this WorkloadHardeningCheck.
 	// Each check run corresponds to a specific security context configuration applied to the workload.
-	CheckRuns map[string]CheckRun `json:"checkRuns,omitempty"`
+	CheckRuns map[string]*CheckRun `json:"checkRuns,omitempty"`
 
 	// FinalRun represents the final run of the workload hardening check, which applies the recommended security contexts.
 	FinalRun *CheckRun `json:"finalRun,omitempty"`

@@ -1,0 +1,14 @@
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+  name: mariadb
+  namespace: mariadb
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: mariadb
+  baselineDuration: 1m
+  suffix: orakel

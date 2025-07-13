@@ -339,16 +339,29 @@ func (in *WorkloadHardeningCheckStatus) DeepCopyInto(out *WorkloadHardeningCheck
 	}
 	if in.BaselineRuns != nil {
 		in, out := &in.BaselineRuns, &out.BaselineRuns
-		*out = make([]CheckRun, len(*in))
+		*out = make([]*CheckRun, len(*in))
 		for i := range *in {
-			(*in)[i].DeepCopyInto(&(*out)[i])
+			if (*in)[i] != nil {
+				in, out := &(*in)[i], &(*out)[i]
+				*out = new(CheckRun)
+				(*in).DeepCopyInto(*out)
+			}
 		}
 	}
 	if in.CheckRuns != nil {
 		in, out := &in.CheckRuns, &out.CheckRuns
-		*out = make(map[string]CheckRun, len(*in))
+		*out = make(map[string]*CheckRun, len(*in))
 		for key, val := range *in {
-			(*out)[key] = *val.DeepCopy()
+			var outVal *CheckRun
+			if val == nil {
+				(*out)[key] = nil
+			} else {
+				inVal := (*in)[key]
+				in, out := &inVal, &outVal
+				*out = new(CheckRun)
+				(*in).DeepCopyInto(*out)
+			}
+			(*out)[key] = outVal
 		}
 	}
 	if in.FinalRun != nil {
