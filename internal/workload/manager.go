@@ -79,6 +79,70 @@ func (m *WorkloadCheckManager) refreshWorkloadHardeningCheck() error {
 	return nil
 }
 
+func (m *WorkloadCheckManager) GetReplicaCount(ctx context.Context, namespace string) (int32, error) {
+
+	workloadUnderTestPtr, err := m.GetWorkloadUnderTest(ctx, namespace)
+	if err != nil {
+		m.logger.Error(err, "failed to get workload under test")
+		return 0, fmt.Errorf("failed to get workload under test: %w", err)
+	}
+
+	switch v := (*workloadUnderTestPtr).(type) {
+	case *appsv1.Deployment:
+		if v.Spec.Replicas != nil {
+			return *v.Spec.Replicas, nil
+		}
+		return 1, nil // Default to 1 if not set
+	case *appsv1.StatefulSet:
+		if v.Spec.Replicas != nil {
+			return *v.Spec.Replicas, nil
+		}
+		return 1, nil // Default to 1 if not set
+	case *appsv1.DaemonSet:
+		return 0, fmt.Errorf("cannot scale DaemonSet")
+	default:
+		return 0, fmt.Errorf("unsupported workload kind: %T", v)
+	}
+}
+
+func (m *WorkloadCheckManager) ScaleWorkloadUnderTest(ctx context.Context, namespace string, replicas int32) error {
+
+	workloadUnderTestPtr, err := m.GetWorkloadUnderTest(ctx, namespace)
+	if err != nil {
+		m.logger.Error(err, "failed to get workload under test")
+		return fmt.Errorf("failed to get workload under test: %w", err)
+	}
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+
+		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
+		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
+			if apierrors.IsNotFound(err) {
+				// workloadHardeningCheck resource was deleted, while a check was running
+				m.logger.Info("WorkloadHardeningCheck not found, skipping check run update")
+				return nil // If the resource is not found, we can skip the update
+			}
+			m.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+			return fmt.Errorf("failed to re-fetch WorkloadHardeningCheck: %w", err)
+		}
+
+		switch v := (*workloadUnderTestPtr).(type) {
+		case *appsv1.Deployment:
+			v.Spec.Replicas = &replicas
+		case *appsv1.StatefulSet:
+			v.Spec.Replicas = &replicas
+		case *appsv1.DaemonSet:
+			return fmt.Errorf("cannot scale DaemonSet")
+		default:
+			return fmt.Errorf("unsupported workload kind: %T", v)
+		}
+
+		return m.Update(ctx, *workloadUnderTestPtr)
+	})
+
+	return err
+}
+
 func (m *WorkloadCheckManager) GetPodSpecTemplate(ctx context.Context, namespace string) (*v1.PodSpec, error) {
 
 	workloadUnderTestPtr, err := m.GetWorkloadUnderTest(ctx, namespace)

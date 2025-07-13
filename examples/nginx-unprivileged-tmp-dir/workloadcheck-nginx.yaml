@@ -8,4 +8,12 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: nginx-unprivileged-tmp-dir
+  securityContext:
+    pod:
+      runAsUser: 101
+      runAsGroup: 101
+      fsGroup: 101
+    container:
+      runAsUser: 101
+      runAsGroup: 101
   baselineDuration: 1m

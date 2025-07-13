@@ -210,7 +210,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// The final check run has failed! We set the Finished condition to true and return
 	// ToDo: Analyse the results for the final check run and report the errors
-	if meta.IsStatusConditionPresentAndEqual(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeFinished, metav1.ConditionUnknown) {
+	if meta.IsStatusConditionPresentAndEqual(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck, metav1.ConditionUnknown) {
 		log.Info("Final check run failed, setting Finished condition to true")
 		err = checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
@@ -219,7 +219,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			Message: "Final check run failed, cannot proceed with checks",
 		})
 
-		return ctrl.Result{RequeueAfter: 10 * time.Minute}, err
+		return ctrl.Result{}, err
 	}
 
 	// If the final check run is already running, we need to wait for it to finish
