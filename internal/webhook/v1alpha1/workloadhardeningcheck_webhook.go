@@ -70,7 +70,7 @@ func (d *WorkloadHardeningCheckCustomDefaulter) Default(ctx context.Context, obj
 	// Set suffix as early as possible
 	if workloadhardeningcheck.Spec.Suffix == "" {
 		workloadhardeningchecklog.Info("Setting suffix for WorkloadHardeningCheck", "name", workloadhardeningcheck.GetName())
-		workloadhardeningcheck.Spec.Suffix = utilrand.String(10)
+		workloadhardeningcheck.Spec.Suffix = utilrand.String(8) // Generate a random suffix of 8 characters
 	} else {
 		workloadhardeningchecklog.Info("Suffix already set", "suffix", workloadhardeningcheck.Spec.Suffix)
 	}

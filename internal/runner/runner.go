@@ -94,11 +94,21 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 // Create the target namespace name. It consists of the base namespace, the suffix set on the workload hardening check, and the check type.
 func (r *CheckRunner) generateTargetNamespaceName() string {
 	base := r.workloadHardeningCheck.Namespace
-	if len(base) > 200 {
-		base = base[:200]
+	if len(base) > 45 {
+		base = base[:45] // Limit the base namespace to 45 characters to ensure the total length does not exceed 63 characters
 	}
 
-	return strings.ToLower(fmt.Sprintf("%s-%s-%s", base, r.workloadHardeningCheck.Spec.Suffix, r.checkType))
+	// max length: 63
+	// suffix length: 8
+	// checkType: variable ~10-30 characters => find abreviation... for checkType
+
+	namespaceName := strings.ToLower(fmt.Sprintf("%s-%s-%s", base, r.workloadHardeningCheck.Spec.Suffix, r.checkType))
+
+	if len(namespaceName) > 63 {
+		return namespaceName[:63] // Ensure the namespace name does not exceed 63 characters
+	}
+
+	return namespaceName
 }
 
 func (r *CheckRunner) namespaceExists(ctx context.Context, namespaceName string) bool {
