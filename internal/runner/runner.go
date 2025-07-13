@@ -238,10 +238,10 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 		case checksv1alpha1.ConditionTypeBaseline:
 			// Set/Update condition for baseline check
 			if r.workloadHardeningCheck.Status.BaselineRuns == nil {
-				r.workloadHardeningCheck.Status.BaselineRuns = []checksv1alpha1.CheckRun{}
+				r.workloadHardeningCheck.Status.BaselineRuns = []*checksv1alpha1.CheckRun{}
 			}
 
-			r.workloadHardeningCheck.Status.BaselineRuns = append(r.workloadHardeningCheck.Status.BaselineRuns, checkRun)
+			r.workloadHardeningCheck.Status.BaselineRuns = append(r.workloadHardeningCheck.Status.BaselineRuns, &checkRun)
 
 		case checksv1alpha1.ConditionTypeFinalCheck:
 			r.workloadHardeningCheck.Status.FinalRun = &checkRun
@@ -249,9 +249,9 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 
 			// Set/Update condition
 			if r.workloadHardeningCheck.Status.CheckRuns == nil {
-				r.workloadHardeningCheck.Status.CheckRuns = make(map[string]checksv1alpha1.CheckRun)
+				r.workloadHardeningCheck.Status.CheckRuns = make(map[string]*checksv1alpha1.CheckRun)
 			}
-			r.workloadHardeningCheck.Status.CheckRuns[checkRun.Name] = checkRun
+			r.workloadHardeningCheck.Status.CheckRuns[checkRun.Name] = &checkRun
 		}
 		return r.Status().Update(ctx, r.workloadHardeningCheck)
 
