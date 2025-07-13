@@ -1,0 +1,11 @@
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  name: nginx-unprivileged-tmp-dir
+  namespace: oof-nginx-unprivileged-tmp-dir
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nginx-unprivileged-tmp-dir
+  baselineDuration: 1m

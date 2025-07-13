@@ -7,3 +7,5 @@ It must run as root since it binds to port 80, and it requires write access to t
 We expect the following tests to fail
 - runAsNonRoot
 - readOnlyRootFileSystem
+- User
+- dropCapabilitiesAll

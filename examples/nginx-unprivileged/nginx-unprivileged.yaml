@@ -2,15 +2,15 @@
 apiVersion: v1
 kind: Namespace
 metadata:
-  name: oof-nginx-unrestricted
+  name: oof-nginx-unprivileged
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   labels:
     app: nginx
-  name: nginx-unrestricted
-  namespace: oof-nginx-unrestricted
+  name: nginx-unprivileged
+  namespace: oof-nginx-unprivileged
 spec:
   selector:
     matchLabels:
@@ -23,8 +23,8 @@ spec:
         app: nginx
     spec:
       containers:
-      - name: nginx
-        image: nginx:1.14.2
-        ports:
-        - containerPort: 80
-        securityContext: {}
+        - name: nginx
+          image: nginx:1.14.2
+          ports:
+            - containerPort: 8080
+          securityContext: {}

@@ -123,13 +123,13 @@ data:
     slow_query_log=0
     long_query_time=10.0
     binlog_expire_logs_seconds=2592000
-    
+
     [client]
     port=3306
     socket=/opt/bitnami/mariadb/tmp/mysql.sock
     default-character-set=UTF8
     plugin_dir=/opt/bitnami/mariadb/plugin
-    
+
     [manager]
     port=3306
     socket=/opt/bitnami/mariadb/tmp/mysql.sock
@@ -230,12 +230,11 @@ spec:
         app.kubernetes.io/part-of: mariadb
         app.kubernetes.io/component: primary
     spec:
-      
       automountServiceAccountToken: false
       serviceAccountName: mariadb
       affinity:
         podAffinity:
-          
+
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
             - podAffinityTerm:
@@ -247,7 +246,7 @@ spec:
                 topologyKey: kubernetes.io/hostname
               weight: 1
         nodeAffinity:
-          
+
       securityContext:
         fsGroup: 1001
         fsGroupChangePolicy: Always
@@ -261,7 +260,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
-              - ALL
+                - ALL
             privileged: false
             readOnlyRootFilesystem: true
             runAsGroup: 1001
@@ -302,7 +301,7 @@ spec:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
-              - ALL
+                - ALL
             privileged: false
             readOnlyRootFilesystem: true
             runAsGroup: 1001
