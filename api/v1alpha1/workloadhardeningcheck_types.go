@@ -179,8 +179,6 @@ const (
 
 	// Preparation recording states
 	ReasonPreparationVerifying = "Verifying"
-	// Original workload is not running, so we cannot start the recording
-	ReasonPreparationFailed = "NotRunning"
 
 	// Check needs to be requeued, e.g., if the workload is not running or the baseline recording is not finished yet
 	ReasonRequeue = "Requeue"
