@@ -170,8 +170,22 @@ func (r *CheckRunner) deleteCheckNamespace(ctx context.Context) error {
 	return nil
 }
 
+func (r *CheckRunner) setStatusRunning(ctx context.Context, message string) {
+	conditionReason := checksv1alpha1.ReasonCheckRecording
+	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
+		conditionReason = checksv1alpha1.ReasonBaselineRecording
+	}
+
+	r.checkManager.SetCondition(ctx, metav1.Condition{
+		Type:    r.conditionType,
+		Status:  metav1.ConditionFalse,
+		Reason:  conditionReason,
+		Message: message,
+	})
+}
+
 func (r *CheckRunner) setStatusFailed(ctx context.Context, message string) {
-	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFailed
+	conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
 	if strings.Contains(r.checkType, "baseline") {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
 	}
@@ -186,7 +200,7 @@ func (r *CheckRunner) setStatusFailed(ctx context.Context, message string) {
 }
 
 func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, securityContext *checksv1alpha1.SecurityContextDefaults) {
-	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecordingFinished
+	conditionReason := checksv1alpha1.ReasonCheckRecordingFinished
 	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFinished
 	}
@@ -253,20 +267,6 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 		)
 		return
 	}
-}
-
-func (r *CheckRunner) setStatusRunning(ctx context.Context, message string) {
-	conditionReason := titleCase.String(r.checkType) + checksv1alpha1.ReasonCheckRecording
-	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
-		conditionReason = checksv1alpha1.ReasonBaselineRecording
-	}
-
-	r.checkManager.SetCondition(ctx, metav1.Condition{
-		Type:    r.conditionType,
-		Status:  metav1.ConditionFalse,
-		Reason:  conditionReason,
-		Message: message,
-	})
 }
 
 func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alpha1.SecurityContextDefaults) {
