@@ -50,7 +50,7 @@ var titleCase = cases.Title(language.English)
 
 func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
 
-	log := log.FromContext(ctx).WithName("WorkloadHandler")
+	log := log.FromContext(ctx).WithName(checkType + "CheckRunner")
 
 	conditionType := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
 	if strings.Contains(strings.ToLower(checkType), "baseline") {

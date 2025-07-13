@@ -119,8 +119,9 @@ func (m *WorkloadCheckManager) FinalCheckOverdue() bool {
 
 func (m *WorkloadCheckManager) CheckRecorded(checkType string) bool {
 	m.refreshWorkloadHardeningCheck()
-	if meta.IsStatusConditionTrue(m.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
-		condition := meta.FindStatusCondition(m.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
+	conditionType := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
+	if meta.IsStatusConditionTrue(m.workloadHardeningCheck.Status.Conditions, conditionType) {
+		condition := meta.FindStatusCondition(m.workloadHardeningCheck.Status.Conditions, conditionType)
 		return condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished
 	}
 	return false
@@ -128,8 +129,9 @@ func (m *WorkloadCheckManager) CheckRecorded(checkType string) bool {
 
 func (m *WorkloadCheckManager) CheckInProgress(checkType string) bool {
 	m.refreshWorkloadHardeningCheck()
-	if meta.IsStatusConditionFalse(m.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck) {
-		condition := meta.FindStatusCondition(m.workloadHardeningCheck.Status.Conditions, titleCase.String(checkType)+checksv1alpha1.ConditionTypeCheck)
+	conditionType := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
+	if meta.IsStatusConditionFalse(m.workloadHardeningCheck.Status.Conditions, conditionType) {
+		condition := meta.FindStatusCondition(m.workloadHardeningCheck.Status.Conditions, conditionType)
 		return condition.Reason == checksv1alpha1.ReasonCheckRecording
 	}
 	return false
