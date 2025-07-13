@@ -348,6 +348,8 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 				}
 
+				log.Info("Starting new check run", "checkType", checkType)
+
 				securityContext := checkManager.GetSecurityContextForCheckType(checkType)
 
 				checkRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)

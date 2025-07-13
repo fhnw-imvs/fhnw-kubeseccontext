@@ -117,7 +117,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 		if err != nil {
 			log.Error(err, fmt.Sprintf("error creating %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
 		} else {
-			log.V(1).Info(fmt.Sprintf("created %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
+			log.V(3).Info(fmt.Sprintf("created %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
 		}
 	}
 
@@ -212,10 +212,10 @@ func getAllResources(ctx context.Context, namespace string) (map[string]*unstruc
 				continue
 			}
 			if len(resourceObjects.Items) == 0 {
-				log.V(1).Info("no resources found for", "kind", gvr.String())
+				log.V(2).Info("no resources found for", "kind", gvr.String())
 				continue
 			}
-			log.V(1).Info(fmt.Sprintf("found %d resources for: %s\n", len(resourceObjects.Items), gvr.String()))
+			log.V(3).Info(fmt.Sprintf("found %d resources for: %s\n", len(resourceObjects.Items), gvr.String()))
 
 			if _, ok := resources[resourceType.Name]; !ok {
 				resources[resourceType.Name] = &unstructured.UnstructuredList{}
