@@ -334,10 +334,15 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	}
 
 	replicaCount, err := r.checkManager.GetReplicaCount(ctx, targetNamespaceName)
-	if err != nil {
-		log.V(2).Info("Scaling target workload to 0", "originalReplicaCount", replicaCount)
+	if replicaCount > 0 && err == nil {
+		log.V(1).Info("Scaling target workload to 0", "originalReplicaCount", replicaCount)
 		r.checkManager.ScaleWorkloadUnderTest(ctx, targetNamespaceName, 0)
 		// Should we wait for the workload to be scaled down before proceeding?
+	} else if err != nil {
+		// DaemonSets don't have a replica count, so we ignore the error for them
+		if strings.ToLower(r.workloadHardeningCheck.Spec.TargetRef.Kind) != "daemonset" {
+			log.Error(err, "failed to get replica count for workload under test")
+		}
 	}
 
 	if securityContext != nil {

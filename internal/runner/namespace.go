@@ -33,7 +33,7 @@ var resourcesToSkip = []string{
 }
 
 func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffix string) error {
-	log := log.FromContext(ctx).WithName("runner")
+	log := log.FromContext(ctx).WithName("runner").WithValues("targetNamespace", targetNamespace, "suffix", suffix)
 
 	// check if targetNamespace already exists
 	cl, err := client.New(config.GetConfigOrDie(), client.Options{})
@@ -79,7 +79,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 			continue
 		}
 
-		log.V(1).Info(fmt.Sprintf("cloning %s/%s to %s", resource.GetKind(), resource.GetName(), targetNamespace))
+		log.V(1).Info(fmt.Sprintf("cloning %s/%s", resource.GetKind(), resource.GetName()))
 
 		// cleanup resource before cloning
 		clonedResource := resource.DeepCopy()
@@ -115,13 +115,13 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 
 		err = cl.Create(ctx, clonedResource)
 		if err != nil {
-			log.Error(err, fmt.Sprintf("error creating %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
+			log.Error(err, fmt.Sprintf("error creating %s/%s", resource.GetKind(), resource.GetName()))
 		} else {
-			log.V(3).Info(fmt.Sprintf("created %s/%s in %s", resource.GetKind(), resource.GetName(), targetNamespace))
+			log.V(3).Info(fmt.Sprintf("created %s/%s", resource.GetKind(), resource.GetName()))
 		}
 	}
 
-	log.Info("namespace cloned", "sourceNamespace", sourceNamespace, "targetNamespace", targetNamespace)
+	log.Info("namespace cloned")
 
 	return nil
 }

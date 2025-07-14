@@ -139,7 +139,7 @@ func RefreshPodMetricsPerNode(ctx context.Context, nodeName string, resultsChann
 }
 
 func getNodeMetrics(ctx context.Context, nodeName string) (*statsapi.Summary, error) {
-	log := log.FromContext(ctx).WithName("runner")
+	log := log.FromContext(ctx).WithName("metrics")
 	config := config.GetConfigOrDie()
 
 	client, _ := rest.HTTPClientFor(config)
@@ -150,7 +150,7 @@ func getNodeMetrics(ctx context.Context, nodeName string) (*statsapi.Summary, er
 		log.Error(
 			err,
 			"couldn't fetch metrics",
-			"node.name", nodeName,
+			"nodeName", nodeName,
 		)
 		return nil, err
 	}
@@ -203,7 +203,11 @@ func GetLogs(ctx context.Context, pod *corev1.Pod, containerName string, previou
 // Records cpu and memory usage metrics for a pod
 // The metrics are collected at pod level, and not at container level
 func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int) (*recording.RecordedMetrics, error) {
-	log := log.FromContext(ctx).WithName("runner")
+	log := log.FromContext(ctx).WithName("metrics").WithValues(
+		"podName", pod.Name,
+		"podUID", pod.UID,
+		"targetNamespace", pod.Namespace,
+	)
 
 	recordedMetrics := map[metav1.Time]recording.ResourceUsageRecord{}
 
@@ -224,7 +228,7 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 			if strings.Contains(err.Error(), "pod not found in metrics") {
 				log.V(2).Info("pod not yet found in metrics, retry in 5 seconds")
 			} else {
-				log.Error(err, "error getting pod resource usage", "pod.name", pod.Name, "pod.uid", pod.UID)
+				log.Error(err, "error getting pod resource usage")
 			}
 			// wait for 5 seconds and try again
 			time.Sleep(time.Duration(5) * time.Second)
@@ -240,15 +244,13 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 
 		log.V(3).Info(
 			"Recorded metrics",
-			"pod.name", pod.Name,
-			"pod.uid", pod.UID,
 			"nanoCpu", metric.CPU,
 			"memoryBytes", metric.Memory,
 		)
 
-		// break loop if the next interval is after the end time
+		// break loop if the duration is reached
 		if time.Since(start) >= time.Duration(duration)*time.Second {
-			log.Info("Recording resource usage finished", "podName", pod.Name)
+			log.Info("Recording resource usage finished")
 			break
 		}
 
