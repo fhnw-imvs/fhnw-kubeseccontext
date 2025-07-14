@@ -76,51 +76,16 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// Get Resource
 	// Fetch the WorkloadHardeningCheck instance
-	// If the resource is not found, we stop the reconciliation
 	workloadHardening := &checksv1alpha1.WorkloadHardeningCheck{}
 	err := r.Get(ctx, req.NamespacedName, workloadHardening)
 	if err != nil {
+		// If the resource is not found it's usually because it was deleted, we need to cleanup remaining resources
 		if apierrors.IsNotFound(err) {
-			// If the custom resource is not found then it usually means that it was deleted or not created
-			log.Info("WorkloadHardeningCheck deleted, cleaning up resources")
-
-			checkNamespaces := corev1.NamespaceList{}
-			err = r.List(
-				ctx,
-				&checkNamespaces,
-				&client.ListOptions{
-					LabelSelector: labels.SelectorFromSet(map[string]string{
-						"orakel.fhnw.ch/source-namespace": workloadHardening.GetNamespace(),
-						"orakel.fhnw.ch/suffix":           workloadHardening.Spec.Suffix,
-					}),
-				},
-			)
-			if err != nil {
-				log.Error(err, "Failed to list namespaces for cleanup")
-				return ctrl.Result{}, err
-			}
-			if len(checkNamespaces.Items) == 0 {
-				log.Info("No namespaces found for cleanup")
-				return ctrl.Result{}, nil
-			}
-
-			log.Info("Found namespaces for cleanup", "count", len(checkNamespaces.Items))
-
-			for _, ns := range checkNamespaces.Items {
-				log.Info("Deleting namespace", "namespace", ns.Name)
-				err = r.deleteNamespace(ctx, ns.Name)
-				if err != nil {
-					log.Error(err, "Failed to delete namespace", "namespace", ns.Name)
-				} else {
-					log.Info("Deleted namespace", "namespace", ns.Name)
-				}
-			}
-
-			return ctrl.Result{}, nil
+			return r.cleanupReconcileLoop(ctx, req.Namespace)
 		}
 		// Error reading the object - requeue the request.
 		log.Error(err, "Failed to get WorkloadHardeningCheck, requeing")
-		return ctrl.Result{}, err
+		return ctrl.Result{RequeueAfter: 1 * time.Minute}, err
 	}
 
 	// ConditionFinished is set to true when the reconciliation is finished
@@ -130,21 +95,6 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	checkManager := workload.NewWorkloadCheckManager(ctx, r.ValKeyClient, workloadHardening)
-
-	// Let's just set the status as Unknown when no status is available
-	if len(workloadHardening.Status.Conditions) == 0 {
-
-		// Set condition finished to false, so we can track the progress of the reconciliation
-		err = checkManager.SetCondition(ctx, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionFalse,
-			Reason:  checksv1alpha1.ReasonPreparationVerifying,
-			Message: "Reconciliation started",
-		})
-		if err != nil {
-			return ctrl.Result{RequeueAfter: 10 * time.Minute}, err
-		}
-	}
 
 	// If the final check run is already finished, we set the Finished condition to true
 	if checkManager.RecommendationExists() && checkManager.FinalCheckRecorded() {
@@ -421,6 +371,49 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// Called if the WorkloadHardeningCheck instance is removed or deleted and we need to clean up the resources
+func (r *WorkloadHardeningCheckReconciler) cleanupReconcileLoop(ctx context.Context, sourceNamespace string) (ctrl.Result, error) {
+	log := log.FromContext(ctx).WithName("cleanupReconcileLoop")
+
+	// If the custom resource is not found then it usually means that it was deleted or not created
+	log.Info("WorkloadHardeningCheck deleted, cleaning up resources")
+
+	checkNamespaces := corev1.NamespaceList{}
+	err := r.List(
+		ctx,
+		&checkNamespaces,
+		&client.ListOptions{
+			LabelSelector: labels.SelectorFromSet(map[string]string{
+				"orakel.fhnw.ch/source-namespace": sourceNamespace,
+			}),
+		},
+	)
+
+	if err != nil {
+		log.Error(err, "Failed to list namespaces for cleanup")
+		return ctrl.Result{}, err
+	}
+	if len(checkNamespaces.Items) == 0 {
+		log.Info("No namespaces found for cleanup")
+		return ctrl.Result{}, nil
+	}
+
+	log.Info("Found namespaces for cleanup", "count", len(checkNamespaces.Items))
+
+	for _, ns := range checkNamespaces.Items {
+		log.Info("Deleting namespace", "namespace", ns.Name)
+		err = r.deleteNamespace(ctx, ns.Name)
+		if err != nil {
+			log.Error(err, "Failed to delete namespace", "namespace", ns.Name)
+		} else {
+			log.Info("Deleted namespace", "namespace", ns.Name)
+		}
+	}
+
+	return ctrl.Result{}, nil
+
 }
 
 func (r *WorkloadHardeningCheckReconciler) deleteNamespace(ctx context.Context, namespaceName string) error {
