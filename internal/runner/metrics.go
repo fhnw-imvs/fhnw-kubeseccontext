@@ -212,9 +212,15 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 	recordedMetrics := map[metav1.Time]recording.ResourceUsageRecord{}
 
 	start := time.Now()
-	log.Info("Recording resource usage for pod", "podName", pod.Name)
+	log.Info("Recording resource usage for pod")
 
+	lastLoop := false
 	for {
+		// break loop if the duration is reached
+		if time.Since(start) >= time.Duration(duration)*time.Second {
+			lastLoop = true
+		}
+
 		if pod.Spec.NodeName == "" {
 			return nil, fmt.Errorf("pod %s has no node assigned", pod.Name)
 		}
@@ -229,6 +235,9 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 				log.V(2).Info("pod not yet found in metrics, retry in 5 seconds")
 			} else {
 				log.Error(err, "error getting pod resource usage")
+			}
+			if lastLoop {
+				break
 			}
 			// wait for 5 seconds and try again
 			time.Sleep(time.Duration(5) * time.Second)
@@ -247,15 +256,14 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 			"nanoCpu", metric.CPU,
 			"memoryBytes", metric.Memory,
 		)
-
-		// break loop if the duration is reached
-		if time.Since(start) >= time.Duration(duration)*time.Second {
-			log.Info("Recording resource usage finished")
+		if lastLoop {
 			break
 		}
 
 		time.Sleep(time.Duration(interval) * time.Second)
 	}
+
+	log.Info("Recording resource usage finished")
 
 	recordedMetricsData := recording.RecordedMetrics{
 		Pod:      pod.Name,
