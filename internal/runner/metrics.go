@@ -208,14 +208,9 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 	recordedMetrics := map[metav1.Time]recording.ResourceUsageRecord{}
 
 	start := time.Now()
-	end := start.Add(time.Duration(duration) * time.Second)
 	log.Info("Recording resource usage for pod", "podName", pod.Name)
 
 	for {
-		if time.Now().After(end) {
-			log.Info("Recording resource usage finished", "podName", pod.Name)
-			break
-		}
 		if pod.Spec.NodeName == "" {
 			return nil, fmt.Errorf("pod %s has no node assigned", pod.Name)
 		}
@@ -252,7 +247,8 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 		)
 
 		// break loop if the next interval is after the end time
-		if time.Now().Add(time.Duration(interval) * time.Second).After(end) {
+		if time.Since(start) >= time.Duration(duration)*time.Second {
+			log.Info("Recording resource usage finished", "podName", pod.Name)
 			break
 		}
 
@@ -262,7 +258,7 @@ func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int)
 	recordedMetricsData := recording.RecordedMetrics{
 		Pod:      pod.Name,
 		Start:    start,
-		End:      end,
+		End:      time.Now(),
 		Interval: interval,
 		Duration: duration,
 		Usage:    recordedMetrics,

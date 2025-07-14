@@ -116,7 +116,7 @@ func (m *WorkloadCheckManager) ScaleWorkloadUnderTest(ctx context.Context, names
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
-		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
+		if err := m.Get(ctx, types.NamespacedName{Name: (*workloadUnderTestPtr).GetName(), Namespace: namespace}, *workloadUnderTestPtr); err != nil {
 			if apierrors.IsNotFound(err) {
 				// workloadHardeningCheck resource was deleted, while a check was running
 				m.logger.Info("WorkloadHardeningCheck not found, skipping check run update")
@@ -139,6 +139,11 @@ func (m *WorkloadCheckManager) ScaleWorkloadUnderTest(ctx context.Context, names
 
 		return m.Update(ctx, *workloadUnderTestPtr)
 	})
+
+	if err == nil {
+		m.logger.V(2).Info("scaled workload under test", "replicas", replicas, "workload", (*workloadUnderTestPtr).GetName())
+		return nil
+	}
 
 	return err
 }

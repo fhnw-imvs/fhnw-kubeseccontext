@@ -333,34 +333,69 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		return
 	}
 
+	replicaCount, err := r.checkManager.GetReplicaCount(ctx, targetNamespaceName)
+	if err != nil {
+		log.V(2).Info("Scaling target workload to 0", "originalReplicaCount", replicaCount)
+		r.checkManager.ScaleWorkloadUnderTest(ctx, targetNamespaceName, 0)
+		// Should we wait for the workload to be scaled down before proceeding?
+	}
+
 	if securityContext != nil {
 		log.V(1).Info("applying security context to workload under test")
-		err = wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
-		if err != nil {
-			log.Error(err, "failed to apply security context to workload under test")
-			r.setStatusFailed(ctx, "Failed to apply security context to workload")
 
+		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+
+			// Re-fetch the workload under test to ensure we have the latest state
+			if err := r.Get(ctx, types.NamespacedName{Namespace: targetNamespaceName, Name: (*workloadUnderTest).GetName()}, *workloadUnderTest); err != nil {
+				if apierrors.IsNotFound(err) {
+					// workloadHardeningCheck resource was deleted, while a check was running
+					r.logger.Info("WorkloadHardeningCheck not found, skipping check run update")
+					return err // If the resource is not found, we can skip the update
+				}
+				r.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+				return fmt.Errorf("failed to re-fetch WorkloadHardeningCheck: %w", err)
+
+			}
+
+			err = wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
+			if err != nil {
+				log.Error(err, "failed to apply security context to workload under test")
+
+				return fmt.Errorf("failed to apply security context to workload under test: %w", err)
+			}
+
+			return r.Update(ctx, *workloadUnderTest)
+
+		})
+
+		if err != nil {
+			log.Error(err, "failed to update workload under test with security context")
+			r.setStatusFailed(ctx, "Failed to update workload under test with security context")
+			return
+		}
+
+		log.V(2).Info("applied security context to workload under test")
+	}
+
+	// Scale the workload under test to the original replica count
+	if replicaCount > 0 {
+		log.V(1).Info("scaling workload to original replica count", "replicaCount", replicaCount)
+		err = r.checkManager.ScaleWorkloadUnderTest(ctx, targetNamespaceName, replicaCount)
+		if err != nil {
+			log.Error(err, "failed to scale workload under test to original replica count")
+			r.setStatusFailed(ctx, "Failed to scale workload under test to original replica count")
 			return
 		}
 	}
-
-	err = r.Update(ctx, *workloadUnderTest)
-	if err != nil {
-		log.Error(err, "failed to update workload under test with security context")
-		r.setStatusFailed(ctx, "Failed to update security context on workload")
-
-		return
-	}
-	log.V(2).Info("applied security context to workload under test")
 
 	// ToDo: detect if pods are able to get into a running state, otherwise we cannot record metrics and it's clear this has failed
 	running := false
 	startTime := metav1.Now()
 	for !running {
-		r.Get(ctx, types.NamespacedName{Namespace: targetNamespaceName, Name: r.workloadHardeningCheck.Spec.TargetRef.Name}, *workloadUnderTest)
+		r.Get(ctx, types.NamespacedName{Namespace: targetNamespaceName, Name: (*workloadUnderTest).GetName()}, *workloadUnderTest)
 		running, _ = wh.VerifySuccessfullyRunning(*workloadUnderTest)
 
-		if time.Now().After(startTime.Add(2 * time.Minute)) {
+		if time.Since(startTime.Time) > 2*time.Minute {
 			log.Error(fmt.Errorf("timeout while waiting for workload to be running"), "timeout while waiting for workload to be running")
 			r.setStatusFailed(ctx, "Timeout while waiting for workload to be running")
 
