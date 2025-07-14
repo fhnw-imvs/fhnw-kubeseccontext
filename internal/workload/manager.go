@@ -520,3 +520,16 @@ func VerifySuccessfullyRunning(workloadUnderTest client.Object) (bool, error) {
 
 	return false, fmt.Errorf("kind of workloadUnderTest not supported")
 }
+
+func VerifyUpdated(workloadUnderTest client.Object) (bool, error) {
+	switch v := workloadUnderTest.(type) {
+	case *appsv1.Deployment:
+		return *v.Spec.Replicas == v.Status.UpdatedReplicas, nil
+	case *appsv1.StatefulSet:
+		return *v.Spec.Replicas == v.Status.UpdatedReplicas, nil
+	case *appsv1.DaemonSet:
+		return v.Status.DesiredNumberScheduled == v.Status.UpdatedNumberScheduled, nil
+	}
+
+	return false, fmt.Errorf("kind of workloadUnderTest not supported")
+}

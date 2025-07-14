@@ -50,7 +50,7 @@ var titleCase = cases.Title(language.English)
 
 func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
 
-	log := log.FromContext(ctx).WithName(checkType + "CheckRunner")
+	log := log.FromContext(ctx).WithName("CheckRunner").WithValues("checkType", checkType)
 
 	conditionType := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
 	if strings.Contains(strings.ToLower(checkType), "baseline") {
@@ -77,7 +77,7 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 		return nil
 	}
 
-	return &CheckRunner{
+	checkRunner := &CheckRunner{
 		Client:                 cl,
 		checkManager:           wh.NewWorkloadCheckManager(ctx, valKeyClient, workloadHardeningCheck),
 		logger:                 log,
@@ -88,6 +88,11 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 		conditionType:          conditionType,
 		scheme:                 scheme,
 	}
+
+	// Override checkRunner with one that also includes the targetNamespace
+	checkRunner.logger = checkRunner.logger.WithValues("targetNamespace", checkRunner.generateTargetNamespaceName())
+
+	return checkRunner
 
 }
 
@@ -277,18 +282,22 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 		)
 		return
 	}
+
+	r.recorder.Event(
+		r.workloadHardeningCheck,
+		corev1.EventTypeNormal,
+		conditionReason,
+		fmt.Sprintf(
+			"Recorded %sCheck in namespace %s",
+			r.checkType,
+			r.generateTargetNamespaceName(),
+		),
+	)
 }
 
 func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alpha1.SecurityContextDefaults) {
-	var conditionReason string
 
 	targetNamespaceName := r.generateTargetNamespaceName()
-
-	log := r.logger.WithValues(
-		"targetNamespace", targetNamespaceName,
-		"checkType", r.checkType,
-		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-	)
 
 	// Check if the target namespace already exists, otherwise create it
 	if r.namespaceExists(ctx, targetNamespaceName) {
@@ -297,14 +306,14 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 			r.conditionType,
 			metav1.ConditionUnknown,
 		) {
-			log.Info(
+			r.logger.Info(
 				"Target namespace already exists, and check is in unknown state indicating a previous run was not finished",
 			)
 
 			r.deleteCheckNamespace(ctx)
 		}
 
-		// ToDo: Should we just delete it, and wait for it to be gone, and then create it again?
+		// ToDo: Should we just delete it, or wait for it to be gone, and then create it again?
 
 	}
 
@@ -313,11 +322,11 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		// clone into target namespace
 		err := r.createCheckNamespace(ctx)
 		if err != nil {
-			log.Error(err, "failed to create target namespace for baseline recording")
+			r.logger.Error(err, "failed to create target namespace for baseline recording")
 			return
 		}
 
-		log.Info("created namespace")
+		r.logger.Info("created namespace")
 
 		time.Sleep(1 * time.Second) // Give the namespace some time to be fully created and ready
 	}
@@ -328,30 +337,205 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 	// Fetch the workload we want to test, make sure we fetch it from the target namespace
 	workloadUnderTest, err := r.checkManager.GetWorkloadUnderTest(ctx, targetNamespaceName)
 	if err != nil {
-		log.Error(err, "failed to get workload under test")
+		r.logger.Error(err, "failed to get workload under test")
 		r.setStatusFailed(ctx, "Failed to get workload under test")
 		return
 	}
 
-	replicaCount, err := r.checkManager.GetReplicaCount(ctx, targetNamespaceName)
-	if replicaCount > 0 && err == nil {
-		log.V(1).Info("Scaling target workload to 0", "originalReplicaCount", replicaCount)
-		r.checkManager.ScaleWorkloadUnderTest(ctx, targetNamespaceName, 0)
-		// Should we wait for the workload to be scaled down before proceeding?
-	} else if err != nil {
-		// DaemonSets don't have a replica count, so we ignore the error for them
-		if strings.ToLower(r.workloadHardeningCheck.Spec.TargetRef.Kind) != "daemonset" {
-			log.Error(err, "failed to get replica count for workload under test")
+	err = r.applySecurityContext(ctx, workloadUnderTest, securityContext)
+	if err != nil {
+		r.logger.Error(err, "failed to apply security context to workload under test")
+		r.setStatusFailed(ctx, "Failed to apply security context to workload under test")
+		return
+	}
+
+	// We need to ensure that the pods are updated and scheduled to nodes before we can record metrics
+	// they don't need to be started/running, as they could be in a crash loop
+	updated, err := r.waitForUpdatedPods(ctx, workloadUnderTest)
+	if err != nil || !updated {
+		r.logger.Error(err, "failed to wait for updated pods")
+		r.setStatusFailed(ctx, "Failed to wait for updated pods")
+		conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
+		if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
+			conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
+		}
+		r.recorder.Event(
+			r.workloadHardeningCheck,
+			corev1.EventTypeWarning,
+			conditionReason,
+			fmt.Sprintf(
+				"%sCheck: Failed to wait for updated pods in namespace %s",
+				r.checkType,
+				targetNamespaceName,
+			),
+		)
+	}
+
+	r.logger.Info("workload is updated and ready for recording")
+	r.setStatusRunning(ctx, "Recording metrics")
+
+	startTime := metav1.Now()
+
+	// start recording metrics for target workload
+	recordedMetrics, err := r.recordMetrics(ctx)
+
+	if err != nil {
+		r.logger.Error(err, "failed to record metrics")
+		r.setStatusFailed(ctx, "Failed to record metrics")
+		return
+	}
+
+	// Record logs for the workload, since recordMetrics only returns after the duration is reached, we can asusme that we get the full logs here
+	logs, err := r.recordLogs(ctx, false) // false means we want the current logs, not the previous ones
+	if err != nil {
+		r.logger.Error(err, "failed to record logs")
+		r.setStatusFailed(ctx, "Failed to record logs")
+		return
+	}
+
+	workloadRecording := recording.WorkloadRecording{
+		Type:      r.checkType,
+		Success:   true,
+		StartTime: startTime,
+		EndTime:   metav1.Now(),
+
+		RecordedMetrics:               recordedMetrics,
+		SecurityContextConfigurations: securityContext,
+		Logs:                          logs,
+	}
+
+	err = r.valKeyClient.StoreRecording(
+		ctx,
+		// prefix with original namespace to avoid conflict if suffix is reused
+		r.workloadHardeningCheck.GetNamespace()+":"+r.workloadHardeningCheck.Spec.Suffix,
+		&workloadRecording,
+	)
+
+	if err != nil {
+		r.logger.Error(err, "failed to store workload recording in Valkey")
+		r.setStatusFailed(ctx, "Failed to store workload recording in Valkey")
+		conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
+		if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
+			conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
+		}
+		r.recorder.Event(
+			r.workloadHardeningCheck,
+			corev1.EventTypeWarning,
+			conditionReason,
+			fmt.Sprintf(
+				"Failed to store %sCheck recording in Valkey",
+				r.checkType,
+			),
+		)
+		return
+	}
+
+	r.logger.Info("recorded signals")
+	r.setStatusFinished(ctx, "Signals recorded successfully", securityContext)
+
+	// Cleanup: delete the check namespace after recording
+	err = r.deleteCheckNamespace(ctx)
+	if err != nil {
+		r.logger.Error(err, "failed to delete target namespace after recording")
+	} else {
+		r.logger.Info("deleted target namespace after recording")
+	}
+}
+
+// waits for pods to be updated and scheduled to nodes, they don't need to be started/running, as they could be in a crash loop if the security context is too strict
+func (r *CheckRunner) waitForUpdatedPods(ctx context.Context, workloadUnderTest *client.Object) (bool, error) {
+	// We need to ensure that the pods are updated and scheduled to nodes before we can record metrics, they don't need to be started/running, as they could be in a crash loop
+	updated := false
+	startTime := metav1.Now()
+	for !updated {
+		r.Get(ctx, types.NamespacedName{Namespace: (*workloadUnderTest).GetNamespace(), Name: (*workloadUnderTest).GetName()}, *workloadUnderTest)
+		updated, _ = wh.VerifyUpdated(*workloadUnderTest)
+
+		// Timeout after 2 minutes if the workload is not updated
+		if time.Since(startTime.Time) > 2*time.Minute {
+			r.logger.Error(fmt.Errorf("timeout while waiting for workload to be running"), "timeout while waiting for workload to be running")
+			r.setStatusFailed(ctx, "Timeout while waiting for workload to be running")
+
+			conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
+			if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
+				conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
+			}
+
+			r.recorder.Event(
+				r.workloadHardeningCheck,
+				corev1.EventTypeWarning,
+				conditionReason,
+				fmt.Sprintf(
+					"%sCheck: Timeout while waiting for workloads to be running in namespace %s",
+					r.checkType,
+					(*workloadUnderTest).GetNamespace(),
+				),
+			)
+
+			logs, err := r.recordLogs(ctx, true)
+			if err != nil {
+				r.logger.Error(err, "failed to record logs")
+				return false, err
+			}
+
+			err = r.valKeyClient.StoreRecording(
+				ctx,
+				// prefix with original namespace to avoid conflict if suffix is reused
+				r.workloadHardeningCheck.GetNamespace()+":"+r.workloadHardeningCheck.Spec.Suffix,
+				&recording.WorkloadRecording{
+					Type:      r.checkType,
+					Success:   false,
+					StartTime: startTime,
+					EndTime:   metav1.Now(),
+					Logs:      logs,
+				},
+			)
+			if err != nil {
+				r.logger.Error(err, "failed to store workload recording in Valkey")
+			}
+
+			err = r.deleteCheckNamespace(ctx)
+			if err != nil {
+				r.logger.Error(err, "failed to delete target namespace with failed workload")
+			}
+
+			return false, err
+		}
+		if !updated {
+			r.logger.V(2).Info("workload is not updated yet, waiting for it to be ready")
+			time.Sleep(5 * time.Second) // Wait for 5 seconds before checking again
 		}
 	}
 
+	return true, nil
+}
+
+func (r *CheckRunner) applySecurityContext(ctx context.Context, workloadUnderTest *client.Object, securityContext *checksv1alpha1.SecurityContextDefaults) error {
+
+	replicaCount := int32(0)
+	var err error
+	// Daemonsets can't be scaled down, so we just apply the security context to them
+	if strings.ToLower(r.workloadHardeningCheck.Spec.TargetRef.Kind) != "daemonset" {
+
+		replicaCount, err = r.checkManager.GetReplicaCount(ctx, (*workloadUnderTest).GetNamespace())
+		// If there's an error getting the replica count, we log it but continue without scaling down
+		if err != nil {
+			r.logger.Error(err, "failed to get replica count for workload under test")
+		}
+		if replicaCount > 0 && err == nil {
+			r.logger.V(1).Info("Scaling target workload to 0", "originalReplicaCount", replicaCount)
+			r.checkManager.ScaleWorkloadUnderTest(ctx, (*workloadUnderTest).GetNamespace(), 0)
+		}
+
+	}
+
 	if securityContext != nil {
-		log.V(1).Info("applying security context to workload under test")
+		r.logger.V(1).Info("applying security context to workload under test")
 
 		err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
 
 			// Re-fetch the workload under test to ensure we have the latest state
-			if err := r.Get(ctx, types.NamespacedName{Namespace: targetNamespaceName, Name: (*workloadUnderTest).GetName()}, *workloadUnderTest); err != nil {
+			if err := r.Get(ctx, types.NamespacedName{Namespace: (*workloadUnderTest).GetNamespace(), Name: (*workloadUnderTest).GetName()}, *workloadUnderTest); err != nil {
 				if apierrors.IsNotFound(err) {
 					// workloadHardeningCheck resource was deleted, while a check was running
 					r.logger.Info("WorkloadHardeningCheck not found, skipping check run update")
@@ -362,9 +546,9 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 
 			}
 
-			err = wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
+			err := wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
 			if err != nil {
-				log.Error(err, "failed to apply security context to workload under test")
+				r.logger.Error(err, "failed to apply security context to workload under test")
 
 				return fmt.Errorf("failed to apply security context to workload under test: %w", err)
 			}
@@ -374,160 +558,28 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 		})
 
 		if err != nil {
-			log.Error(err, "failed to update workload under test with security context")
-			r.setStatusFailed(ctx, "Failed to update workload under test with security context")
-			return
+			r.logger.Error(err, "failed to update workload under test with security context")
+			return err
 		}
 
-		log.V(2).Info("applied security context to workload under test")
+		r.logger.V(2).Info("applied security context to workload under test")
 	}
 
 	// Scale the workload under test to the original replica count
-	if replicaCount > 0 {
-		log.V(1).Info("scaling workload to original replica count", "replicaCount", replicaCount)
-		err = r.checkManager.ScaleWorkloadUnderTest(ctx, targetNamespaceName, replicaCount)
+	if strings.ToLower(r.workloadHardeningCheck.Spec.TargetRef.Kind) != "daemonset" && replicaCount > 0 {
+		r.logger.V(1).Info("scaling workload to original replica count", "replicaCount", replicaCount)
+		err = r.checkManager.ScaleWorkloadUnderTest(ctx, (*workloadUnderTest).GetNamespace(), replicaCount)
 		if err != nil {
-			log.Error(err, "failed to scale workload under test to original replica count")
-			r.setStatusFailed(ctx, "Failed to scale workload under test to original replica count")
-			return
+			r.logger.Error(err, "failed to scale workload under test to original replica count")
+			return err
 		}
 	}
 
-	// ToDo: detect if pods are able to get into a running state, otherwise we cannot record metrics and it's clear this has failed
-	running := false
-	startTime := metav1.Now()
-	for !running {
-		r.Get(ctx, types.NamespacedName{Namespace: targetNamespaceName, Name: (*workloadUnderTest).GetName()}, *workloadUnderTest)
-		running, _ = wh.VerifySuccessfullyRunning(*workloadUnderTest)
-
-		if time.Since(startTime.Time) > 2*time.Minute {
-			log.Error(fmt.Errorf("timeout while waiting for workload to be running"), "timeout while waiting for workload to be running")
-			r.setStatusFailed(ctx, "Timeout while waiting for workload to be running")
-
-			r.recorder.Event(
-				r.workloadHardeningCheck,
-				corev1.EventTypeWarning,
-				conditionReason,
-				fmt.Sprintf(
-					"%sCheck: Timeout while waiting for workloads to be running in namespace %s",
-					r.checkType,
-					targetNamespaceName,
-				),
-			)
-
-			logs, err := r.recordLogs(ctx, true)
-			if err != nil {
-				log.Error(err, "failed to record logs")
-				return
-			}
-
-			err = r.valKeyClient.StoreRecording(
-				ctx,
-				// prefix with original namespace to avoid conflict if suffix is reused
-				r.workloadHardeningCheck.GetNamespace()+":"+r.workloadHardeningCheck.Spec.Suffix,
-				&recording.WorkloadRecording{
-					Type:                          r.checkType,
-					Success:                       false,
-					StartTime:                     startTime,
-					EndTime:                       metav1.Now(),
-					SecurityContextConfigurations: securityContext,
-					Logs:                          logs,
-				},
-			)
-			if err != nil {
-				log.Error(err, "failed to store workload recording in Valkey")
-			}
-
-			err = r.deleteCheckNamespace(ctx)
-			if err != nil {
-				log.Error(err, "failed to delete target namespace with failed workload")
-			}
-
-			return
-		}
-		if !running {
-			log.V(2).Info("workload is not running yet, waiting for it to be ready")
-			time.Sleep(5 * time.Second) // Wait for 5 seconds before checking again
-		}
-	}
-
-	log.Info("workload is running")
-
-	r.setStatusRunning(ctx, "Recording metrics")
-
-	// start recording metrics for target workload
-	recordedMetrics, err := r.recordMetrics(ctx)
-
-	if err != nil {
-		log.Error(err, "failed to record metrics")
-
-		r.setStatusFailed(ctx, "Failed to record metrics")
-
-		return
-	}
-
-	workloadRecording := recording.WorkloadRecording{
-		Type:      r.checkType,
-		Success:   true,
-		StartTime: startTime,
-		EndTime:   metav1.Now(),
-
-		RecordedMetrics: recordedMetrics,
-	}
-
-	workloadRecording.SecurityContextConfigurations = securityContext
-
-	// Record logs for the workload
-	logs, err := r.recordLogs(ctx, false) // false means we want the current logs, not the previous ones
-	if err != nil {
-		log.Error(err, "failed to record logs")
-		r.setStatusFailed(ctx, "Failed to record logs")
-		return
-	}
-	workloadRecording.Logs = logs
-
-	err = r.valKeyClient.StoreRecording(
-		ctx,
-		// prefix with original namespace to avoid conflict if suffix is reused
-		r.workloadHardeningCheck.GetNamespace()+":"+r.workloadHardeningCheck.Spec.Suffix,
-		&workloadRecording,
-	)
-
-	if err != nil {
-		log.Error(err, "failed to store workload recording in Valkey")
-	}
-
-	log.Info("recorded signals")
-
-	r.setStatusFinished(ctx, "Signals recorded successfully", securityContext)
-
-	r.recorder.Event(
-		r.workloadHardeningCheck,
-		corev1.EventTypeNormal,
-		conditionReason,
-		fmt.Sprintf(
-			"Recorded %sCheck in namespace %s",
-			r.checkType,
-			targetNamespaceName,
-		),
-	)
-
-	// Cleanup: delete the check namespace after recording
-	err = r.deleteCheckNamespace(ctx)
-	if err != nil {
-		log.Error(err, "failed to delete target namespace after recording")
-	} else {
-		log.Info("deleted target namespace after recording")
-	}
+	return nil
 }
 
 func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUsageRecord, error) {
 	targetNamespace := r.generateTargetNamespaceName()
-	log := r.logger.WithValues(
-		"targetNamespace", targetNamespace,
-		"checkType", r.checkType,
-		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-	)
 
 	labelSelector, err := r.checkManager.GetLabelSelector(ctx)
 	if err != nil {
@@ -536,6 +588,7 @@ func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUs
 
 	time.Sleep(1 * time.Second) // Give the workload some time to be ready with the updated security context
 
+	latestGeneration := int64(0)
 	// get pods under observation, we use the label selector from the workload under test
 	pods := &corev1.PodList{}
 	for len(pods.Items) == 0 {
@@ -548,7 +601,7 @@ func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUs
 			},
 		)
 		if err != nil {
-			log.Error(err, "error fetching pods")
+			r.logger.Error(err, "error fetching pods")
 			return nil, err
 		}
 
@@ -556,6 +609,10 @@ func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUs
 		if len(pods.Items) > 0 {
 			allAssigned := true
 			for _, pod := range pods.Items {
+				if pod.ObjectMeta.Generation > latestGeneration {
+					// If the generation of the pod is higher than the latest generation we have seen, we update the latest generation
+					latestGeneration = pod.ObjectMeta.Generation
+				}
 				if pod.Spec.NodeName == "" {
 					allAssigned = false
 					break
@@ -564,32 +621,43 @@ func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUs
 			if allAssigned {
 				break // All pods are assigned to a node, we can proceed
 			}
+
 			pods = &corev1.PodList{} // reset podList to retry fetching
-			log.Info("Pods are not assigned to a node yet, retrying")
+			r.logger.Info("Pods are not assigned to a node yet, retrying")
 		}
 	}
 
-	log.Info(
+	// Filter pods not belonging to the latest generation
+	podsToRecord := []corev1.Pod{}
+	for _, pod := range pods.Items {
+		if pod.ObjectMeta.Generation < latestGeneration {
+			continue
+		}
+
+		podsToRecord = append(podsToRecord, pod)
+	}
+
+	r.logger.Info(
 		"fetched pods matching workload under",
-		"numberOfPods", len(pods.Items),
+		"numberOfPods", len(podsToRecord),
 	)
 
 	var wg sync.WaitGroup
-	wg.Add(len(pods.Items))
+	wg.Add(len(podsToRecord))
 
 	// Initialize the channels with the expected capacity to avoid blocking
-	metricsChannel := make(chan *recording.RecordedMetrics, len(pods.Items))
+	metricsChannel := make(chan *recording.RecordedMetrics, len(podsToRecord))
 
 	checkDurationSeconds := int(r.checkManager.GetCheckDuration().Seconds())
 
-	for _, pod := range pods.Items {
+	for _, pod := range podsToRecord {
 		go func() {
 			// the metrics are collected per pod
 			recordedMetrics, err := RecordMetrics(ctx, &pod, checkDurationSeconds, 15)
 			if err != nil {
-				log.Error(err, "failed recording metrics")
+				r.logger.Error(err, "failed recording metrics")
 			} else {
-				log.Info(
+				r.logger.Info(
 					"recorded metrics",
 					"podName", pod.Name,
 				)
@@ -613,9 +681,9 @@ func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUs
 			resourceUsageRecords = append(resourceUsageRecords, usage)
 		}
 	}
-	log.V(1).Info("collected metrics")
+	r.logger.V(1).Info("collected metrics")
 	if len(resourceUsageRecords) == 0 {
-		log.Info("no resource usage records found, nothing to store")
+		r.logger.Info("no resource usage records found, nothing to store")
 	}
 
 	return resourceUsageRecords, nil
@@ -623,11 +691,6 @@ func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUs
 
 func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string][]string, error) {
 	targetNamespace := r.generateTargetNamespaceName()
-	log := r.logger.WithValues(
-		"targetNamespace", targetNamespace,
-		"checkType", r.checkType,
-		"workloadName", r.workloadHardeningCheck.Spec.TargetRef.Name,
-	)
 
 	labelSelector, err := r.checkManager.GetLabelSelector(ctx)
 	if err != nil {
@@ -648,7 +711,7 @@ func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string
 			},
 		)
 		if err != nil {
-			log.Error(err, "error fetching pods")
+			r.logger.Error(err, "error fetching pods")
 			return nil, err
 		}
 
@@ -665,11 +728,11 @@ func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string
 				break // All pods are assigned to a node, we can proceed
 			}
 			pods = &corev1.PodList{} // reset podList to retry fetching
-			log.Info("Pods are not assigned to a node yet, retrying")
+			r.logger.Info("Pods are not assigned to a node yet, retrying")
 		}
 	}
 
-	log.Info(
+	r.logger.Info(
 		"fetched pods matching workload under",
 		"numberOfPods", len(pods.Items),
 	)
@@ -688,7 +751,7 @@ func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string
 
 				containerLog, err := GetLogs(ctx, &pod, container.Name, previous)
 				if err != nil {
-					log.Error(
+					r.logger.Error(
 						err,
 						"error fetching logs",
 						"podName", pod.Name,
@@ -697,7 +760,7 @@ func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string
 					continue
 				}
 
-				log.V(1).Info(
+				r.logger.V(1).Info(
 					"fetched logs",
 					"podName", pod.Name,
 					"containerName", container.Name,
@@ -714,7 +777,7 @@ func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string
 
 				containerLog, err := GetLogs(ctx, &pod, container.Name, previous)
 				if err != nil {
-					log.Error(
+					r.logger.Error(
 						err,
 						"error fetching logs",
 						"podName", pod.Name,
@@ -722,7 +785,7 @@ func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string
 					)
 					continue
 				}
-				log.V(1).Info(
+				r.logger.V(1).Info(
 					"fetched logs",
 					"podName", pod.Name,
 					"containerName", container.Name,
@@ -741,7 +804,7 @@ func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string
 
 	wg.Wait()
 
-	log.V(1).Info("collected logs")
+	r.logger.V(1).Info("collected logs")
 
 	return logMap, nil
 }
