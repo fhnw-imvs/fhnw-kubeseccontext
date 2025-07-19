@@ -1,0 +1,102 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oof-port-check-unprivileged
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: port-check
+  namespace: oof-port-check-unprivileged
+data:
+  bind_to_port: |
+    #! /bin/bash
+    set -e # Exit on error
+    set -u # Treat unset variables as an error
+    set -o pipefail # Fail on any command in a pipeline that fails
+
+    # This script opens a port for binding, the port is passed as an argument.
+    if [ -z "$1" ]; then
+      echo "Usage: $0 <port_number>"
+      exit 1
+    fi
+
+    PORT="$1"
+    # Check if the port is a valid number
+    if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+      echo "[$( date --rfc-3339=s)] Error: Port number must be a valid integer between 1 and 65535."
+      exit 1
+    fi
+
+    # Open the port for binding without checking if it is already in use
+    ncat -k -l 127.0.0.1 "$PORT" &
+
+    # Check if ncat command was successful
+    if [ $? -eq 0 ]; then
+      echo "[$( date --rfc-3339=s)] Port $PORT is now open for binding."
+    else
+      echo "[$( date --rfc-3339=s)] Failed to open port $PORT."
+      exit 1
+    fi
+
+    # Wait for the background process to finish
+    nc -vz 127.0.0.1 "$PORT" || {
+      echo "[$( date --rfc-3339=s)] Port $PORT is not open or not reachable."
+      exit 1
+    }
+
+    sleep 600 # Sleep for 10 minutes to keep the script running
+    kill %1 # Kill the background ncat process
+
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: port-check
+  name: port-check
+  namespace: oof-port-check-unprivileged
+spec:
+  selector:
+    matchLabels:
+      app: port-check
+  replicas: 1
+  revisionHistoryLimit: 0
+  template:
+    metadata:
+      labels:
+        app: port-check
+    spec:
+      containers:
+        - name: port-check
+          image: ghcr.io/peschmae/oof-test-workload:main
+          command:
+            - "bind_to_port"
+            - "8080"
+          securityContext: {}
+          volumeMounts:
+            - name: port-check
+              mountPath: /usr/local/bin/try_priv_escalation
+              subPath: bind_to_port
+              readOnly: true
+      volumes:
+        - name: port-check
+          configMap:
+            name: port-check
+            defaultMode: 0777
+---
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  name: port-check-unprivileged
+  namespace: oof-port-check-unprivileged
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: port-check
+  baselineDuration: 1m

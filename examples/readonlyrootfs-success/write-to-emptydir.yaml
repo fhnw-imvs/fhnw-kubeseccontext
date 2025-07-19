@@ -1,0 +1,96 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oof-write-fs-emptydir
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: write-fs
+  namespace: oof-write-fs-emptydir
+data:
+  write_to_dir: |
+    #! /bin/bash
+    set -e # Exit on error
+    set -u # Treat unset variables as an error
+    set -o pipefail # Fail on any command in a pipeline that fails
+
+    # This script creates a directory and writes a file to it, the base directory is passed as an argument.
+
+    if [ -z "$1" ]; then
+      echo "Usage: $0 <base_directory>"
+      exit 1
+    fi
+
+    BASE_DIR="$1"
+    TARGET_DIR="$BASE_DIR/new_directory"
+
+    # Create the target directory if it does not exist
+    mkdir -p "$TARGET_DIR"
+    # Write a file to the target directory
+    echo "[$( date --rfc-3339=s)] This is a test file." > "$TARGET_DIR/test_file.txt"
+
+    # Check if the file was created successfully
+    if [ -f "$TARGET_DIR/test_file.txt" ]; then
+      echo "[$( date --rfc-3339=s)] File created successfully at $TARGET_DIR/test_file.txt"
+    else
+      echo "[$( date --rfc-3339=s)]  Failed to create file."
+      exit 1
+    fi
+
+    sleep 600 # Sleep for 10 minutes to keep the script running
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: write-fs-emptydir
+  name: write-fs-emptydir
+  namespace: oof-write-fs-emptydir
+spec:
+  selector:
+    matchLabels:
+      app: write-fs-emptydir
+  replicas: 1
+  revisionHistoryLimit: 0
+  template:
+    metadata:
+      labels:
+        app: write-fs-emptydir
+    spec:
+      containers:
+        - name: write-fs-emptydir
+          image: docker.io/debian:bookworm
+          command:
+            - "write_to_dir"
+            - "/tmp/"
+          securityContext: {}
+          volumeMounts:
+            - name: write-fs-script
+              mountPath: /usr/local/bin/write_to_dir
+              subPath: write_to_dir
+              readOnly: true
+            - name: tmpdir
+              mountPath: /tmp/
+      volumes:
+        - name: write-fs-script
+          configMap:
+            name: write-fs
+            defaultMode: 0777
+        - name: tmpdir
+          emptyDir: {}
+---
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  name: write-fs-emptydir
+  namespace: oof-write-fs-emptydir
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: write-fs-emptydir
+  baselineDuration: 1m
