@@ -19,9 +19,9 @@ data:
     set -o pipefail # Fail on any command in a pipeline that fails
 
     # Try to chown an existing file
-    if [ -z "$1" ]; then
-      echo "Usage: $0 <file_path>"
-      exit 1
+    if [ "$#" -ne 2 ]; then
+        echo "Usage: $0 <file_path> <uid:gid>"
+        exit 1
     fi
 
     FILE_PATH="$1"
@@ -34,7 +34,7 @@ data:
     fi
 
     # Try to change the ownership of the file
-    chown root:root "$FILE_PATH" || {
+    chown -v ${2} "$FILE_PATH" || {
       echo "[$( date --rfc-3339=s)] Error: Failed to change ownership of $FILE_PATH"
       exit 1
     }
@@ -66,18 +66,23 @@ spec:
           image: docker.io/debian:bookworm
           command:
             - "test_chown"
-            - "/tmp/"
+            - "/tmp/bla"
+            - "33:33" # Change ownership to 33:33 (www-data:www-data)
           securityContext: {}
           volumeMounts:
             - name: test-chown
               mountPath: /usr/local/bin/test_chown
               subPath: test_chown
               readOnly: true
+            - name: tmp
+              mountPath: /tmp/
       volumes:
         - name: test-chown
           configMap:
             name: test-chown
             defaultMode: 0777
+        - name: tmp
+          emptyDir: {}
 ---
 apiVersion: checks.funk.fhnw.ch/v1alpha1
 kind: WorkloadHardeningCheck
