@@ -1,0 +1,76 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oof-run-as-root
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: run-as-root
+  namespace: oof-run-as-root
+data:
+  must_run_as_root: |
+    #! /bin/bash
+    set -e # Exit on error
+    set -u # Treat unset variables as an error
+    set -o pipefail # Fail on any command in a pipeline that fails
+
+
+    # This script checks if the user is root and exits with an error if not.
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "[$( date --rfc-3339=s)] Error: This script must be run as root."
+      exit 1
+    fi
+
+    echo "[$( date --rfc-3339=s)] Running as root user."
+    sleep 600 # Sleep for 10 minutes to keep the script running
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: root-check
+  name: root-check
+  namespace: oof-run-as-root
+spec:
+  selector:
+    matchLabels:
+      app: root-check
+  replicas: 1
+  revisionHistoryLimit: 0
+  template:
+    metadata:
+      labels:
+        app: root-check
+    spec:
+      containers:
+        - name: root-check
+          image: docker.io/debian:bookworm
+          command:
+            - must_run_as_root
+          securityContext: {}
+          volumeMounts:
+            - name: run-as-root-script
+              mountPath: /usr/local/bin/must_run_as_root
+              subPath: must_run_as_root
+              readOnly: true
+      volumes:
+        - name: run-as-root-script
+          configMap:
+            name: run-as-root
+            defaultMode: 0777
+---
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  name: root-check
+  namespace: oof-run-as-root
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: root-check
+  baselineDuration: 1m

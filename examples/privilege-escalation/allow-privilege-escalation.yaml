@@ -1,0 +1,72 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: oof-allow-priv-escalation
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: try-privilege-escalation
+  namespace: oof-allow-priv-escalation
+data:
+  try_priv_escalation: |
+    #! /bin/bash
+
+    if [[ $(setpriv -d | grep "no_new_privs: 1" | wc -l) -eq 1 ]]; then
+        echo "[$( date --rfc-3339=s)] Error: Can't escalate privileges, no_new_privs is enabled."
+        exit 1
+    else
+        echo "[$( date --rfc-3339=s)] Privilege escalation is possible."
+    fi
+
+    sleep 600 # Sleep for 10 minutes to keep the script running
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: allow-priv-escalation
+  name: allow-priv-escalation
+  namespace: oof-allow-priv-escalation
+spec:
+  selector:
+    matchLabels:
+      app: allow-priv-escalation
+  replicas: 1
+  revisionHistoryLimit: 0
+  template:
+    metadata:
+      labels:
+        app: allow-priv-escalation
+    spec:
+      containers:
+        - name: allow-priv-escalation
+          image: docker.io/debian:bookworm
+          command:
+            - "try_priv_escalation"
+          securityContext: {}
+          volumeMounts:
+            - name: try-privilege-escalation
+              mountPath: /usr/local/bin/try_priv_escalation
+              subPath: try_priv_escalation
+              readOnly: true
+      volumes:
+        - name: try-privilege-escalation
+          configMap:
+            name: try-privilege-escalation
+            defaultMode: 0777
+---
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: WorkloadHardeningCheck
+metadata:
+  name: allow-priv-escalation
+  namespace: oof-allow-priv-escalation
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: allow-priv-escalation
+  baselineDuration: 1m
