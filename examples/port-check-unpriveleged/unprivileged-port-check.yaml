@@ -80,7 +80,7 @@ spec:
           securityContext: {}
           volumeMounts:
             - name: port-check
-              mountPath: /usr/local/bin/try_priv_escalation
+              mountPath: /usr/local/bin/bind_to_port
               subPath: bind_to_port
               readOnly: true
       volumes:
