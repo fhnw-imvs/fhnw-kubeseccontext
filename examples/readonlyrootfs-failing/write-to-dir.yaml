@@ -4,13 +4,18 @@ kind: Namespace
 metadata:
   name: oof-write-fs
   labels:
-    app.kubernetes.io/name: orakel-of-funk
+    app.kubernetes.io/name: oof-write-fs
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: write-fs
   namespace: oof-write-fs
+  labels:
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
 data:
   write_to_dir: |
     #! /bin/bash
@@ -48,6 +53,8 @@ kind: Deployment
 metadata:
   labels:
     app: write-fs
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
   name: write-fs
   namespace: oof-write-fs
 spec:
@@ -84,6 +91,9 @@ kind: WorkloadHardeningCheck
 metadata:
   name: write-fs
   namespace: oof-write-fs
+  labels:
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
 spec:
   targetRef:
     apiVersion: apps/v1
