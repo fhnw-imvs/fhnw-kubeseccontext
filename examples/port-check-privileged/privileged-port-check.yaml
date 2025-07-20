@@ -4,13 +4,18 @@ kind: Namespace
 metadata:
   name: oof-port-check-privileged
   labels:
-    app.kubernetes.io/name: orakel-of-funk
+    app.kubernetes.io/name: oof-port-check-privileged
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: port-check
   namespace: oof-port-check-privileged
+  labels:
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
 data:
   bind_to_port: |
     #! /bin/bash
@@ -56,6 +61,8 @@ kind: Deployment
 metadata:
   labels:
     app: port-check
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
   name: port-check
   namespace: oof-port-check-privileged
 spec:
@@ -93,6 +100,9 @@ kind: WorkloadHardeningCheck
 metadata:
   name: port-check-privileged
   namespace: oof-port-check-privileged
+  labels:
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
 spec:
   targetRef:
     apiVersion: apps/v1
