@@ -3,6 +3,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: oof-nginx-privileged
+  labels:
+    app.kubernetes.io/name: oof-nginx-privileged
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
 ---
 apiVersion: apps/v1
 kind: Deployment

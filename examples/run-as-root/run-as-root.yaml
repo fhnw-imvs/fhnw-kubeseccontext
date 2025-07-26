@@ -23,15 +23,17 @@ data:
     set -u # Treat unset variables as an error
     set -o pipefail # Fail on any command in a pipeline that fails
 
+    while true
+    do
+      # This script checks if the user is root and exits with an error if not.
+      if [ "$(id -u)" -ne 0 ]; then
+        echo "[$( date --rfc-3339=s)] Error: This script must be run as root."
+      else
+        echo "[$( date --rfc-3339=s)] Running as root user."
+      fi
 
-    # This script checks if the user is root and exits with an error if not.
-    if [ "$(id -u)" -ne 0 ]; then
-      echo "[$( date --rfc-3339=s)] Error: This script must be run as root."
-      exit 1
-    fi
-
-    echo "[$( date --rfc-3339=s)] Running as root user."
-    sleep 600 # Sleep for 10 minutes to keep the script running
+      sleep 5 # Sleep for 5 seconds before checking again
+    done
 ---
 apiVersion: apps/v1
 kind: Deployment

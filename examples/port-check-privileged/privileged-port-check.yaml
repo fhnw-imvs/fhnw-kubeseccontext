@@ -19,7 +19,6 @@ metadata:
 data:
   bind_to_port: |
     #! /bin/bash
-    set -e # Exit on error
     set -u # Treat unset variables as an error
     set -o pipefail # Fail on any command in a pipeline that fails
 
@@ -39,22 +38,17 @@ data:
     # Open the port for binding without checking if it is already in use
     ncat -k -l 127.0.0.1 "$PORT" &
 
-    # Check if ncat command was successful
-    if [ $? -eq 0 ]; then
-      echo "[$( date --rfc-3339=s)] Port $PORT is now open for binding."
-    else
-      echo "[$( date --rfc-3339=s)] Failed to open port $PORT."
-      exit 1
-    fi
+    while true
+    do
+      # Check if ncat command was successful
+      if [ $? -eq 0 ]; then
+        echo "[$( date --rfc-3339=s)] Port $PORT is now open for binding."
+      else
+        echo "[$( date --rfc-3339=s)] Failed to open port $PORT."
+      fi
 
-    # Wait for the background process to finish
-    nc -vz 127.0.0.1 "$PORT" || {
-      echo "[$( date --rfc-3339=s)] Port $PORT is not open or not reachable."
-      exit 1
-    }
-
-    sleep 600 # Sleep for 10 minutes to keep the script running
-    kill %1 # Kill the background ncat process
+      sleep 5 # Sleep for 5 seconds before checking again
+    done
 ---
 apiVersion: apps/v1
 kind: Deployment

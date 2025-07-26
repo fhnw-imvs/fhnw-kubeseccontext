@@ -19,15 +19,20 @@ metadata:
 data:
   try_priv_escalation: |
     #! /bin/bash
+    set -e # Exit on error
+    set -u # Treat unset variables as an error
+    set -o pipefail # Fail on any command in a pipeline that fails
 
-    if [[ $(setpriv -d | grep "no_new_privs: 1" | wc -l) -eq 1 ]]; then
-        echo "[$( date --rfc-3339=s)] Error: Can't escalate privileges, no_new_privs is enabled."
-        exit 1
-    else
-        echo "[$( date --rfc-3339=s)] Privilege escalation is possible."
-    fi
+    while true
+    do
+      if [[ $(setpriv -d | grep "no_new_privs: 1" | wc -l) -eq 1 ]]; then
+          echo "[$( date --rfc-3339=s)] Error: Can't escalate privileges, no_new_privs is enabled."
+      else
+          echo "[$( date --rfc-3339=s)] Privilege escalation is possible."
+      fi
 
-    sleep 600 # Sleep for 10 minutes to keep the script running
+      sleep 5 # Sleep for 5 seconds before checking again
+    done
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -3,6 +3,9 @@ package workload
 import (
 	"context"
 	"fmt"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -29,8 +32,13 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
-// Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
-var titleCase = cases.Title(language.English)
+var (
+	// Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
+	titleCase          = cases.Title(language.English)
+	drainTemplateRegex = regexp.MustCompile(`id=\{\d+\}\s+:\s+size=\{(?P<size>\d+)\}\s+:\s+(?P<template>.*)$`)
+	sizeIndex          = drainTemplateRegex.SubexpIndex("size")
+	templateIndex      = drainTemplateRegex.SubexpIndex("template")
+)
 
 type WorkloadCheckManager struct {
 	client.Client
@@ -256,50 +264,32 @@ func (m *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Sel
 
 func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 
-	// Get results from the workload hardening check from ValKey
-	baselineRecording, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, "baseline"))
-	if err != nil {
-		m.logger.Error(err, "Failed to get baseline recording from ValKey")
-		return fmt.Errorf("failed to get baseline recording from ValKey: %w", err)
-	}
-	if baselineRecording == nil {
-		m.logger.Info("No baseline recording found, skipping analysis")
-		return nil
-	}
-
-	// Get results from the workload hardening check from ValKey
-	baselineRecording2, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, "baseline-2"))
-	if err != nil {
-		m.logger.Error(err, "Failed to get baseline recording from ValKey")
-		return fmt.Errorf("failed to get baseline recording from ValKey: %w", err)
-	}
-	if baselineRecording == nil {
-		m.logger.Info("No baseline recording found, skipping analysis")
-		return nil
-	}
-
 	// Contains a drainMiner for each container in the baseline recording
-	drainMinerPerContainer := make(map[string]*orakel.LogOrakel, len(baselineRecording.Logs))
+	drainMinerPerContainer := make(map[string]*orakel.LogOrakel)
 
-	for containerName, logs := range baselineRecording.Logs {
-		// Initialize a DrainMiner for each pod
-		drainMiner := orakel.NewDrainMiner()
-		drainMiner.LoadBaseline(logs)
-		drainMinerPerContainer[containerName] = drainMiner
-	}
+	// Record baseline for both baseline recordings
+	for _, baseline := range []string{"baseline", "baseline-2"} {
+		// Get results from the workload hardening check from ValKey
+		baselineRecording, err := m.valKeyClient.GetRecording(ctx, fmt.Sprintf("%s:%s:%s", m.workloadHardeningCheck.Namespace, m.workloadHardeningCheck.Spec.Suffix, baseline))
+		if err != nil {
+			m.logger.Error(err, "Failed to get baseline recording from ValKey")
+			return fmt.Errorf("failed to get baseline recording from ValKey: %w", err)
+		}
+		if baselineRecording == nil {
+			m.logger.Info("No baseline recording found, skipping analysis")
+			return nil
+		}
 
-	// If the second baseline recording is available, load it into the drain miners
-	if baselineRecording2 != nil {
-		for containerName, logs := range baselineRecording2.Logs {
-			// Check if the container already has a drainMiner, if not, create one
+		for containerName, logs := range baselineRecording.Logs {
+
 			drainMiner, exists := drainMinerPerContainer[containerName]
 			if !exists {
-				m.logger.V(2).Info("No baseline found for pod", "podName", containerName)
+				// Initialize a new DrainMiner
 				drainMiner = orakel.NewDrainMiner()
-				drainMinerPerContainer[containerName] = drainMiner
 			}
 
 			drainMiner.LoadBaseline(logs)
+			drainMinerPerContainer[containerName] = drainMiner
 		}
 	}
 
@@ -341,18 +331,50 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			}
 
 			anomalies, _ := drainMiner.AnalyzeTarget(logs)
-			if len(anomalies) > 0 {
+			if len(anomalies) > 0 && len(anomalies) <= 5 {
 				m.logger.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
 				checkSuccessful = false
 				if checkRun.Anomalies == nil {
 					checkRun.Anomalies = make(map[string][]string)
 				}
-				if len(anomalies) > 5 {
-					m.logger.V(2).Info("Trimming anomalies to last 5", "checkRun", checkRun.Name, "containerName", containerName)
-					// last 5 anomalies
-					anomalies = anomalies[len(anomalies)-5:]
-				}
+
 				checkRun.Anomalies[containerName] = anomalies
+
+			} else if len(anomalies) > 5 {
+				m.logger.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
+				checkSuccessful = false
+				if checkRun.Anomalies == nil {
+					checkRun.Anomalies = make(map[string][]string)
+				}
+
+				anomalyMiner := orakel.NewDrainMiner()
+				anomalyMiner.LoadBaseline(logs)
+
+				anomalyClusters := anomalyMiner.Clusters()
+				anomalyTemplates := make(map[string]int)
+				for _, cluster := range anomalyClusters {
+					// Convert the template to a string and trim it
+					template := strings.TrimSpace(cluster.String())
+
+					matches := drainTemplateRegex.FindStringSubmatch(template)
+					anomalyTemplates[matches[templateIndex]], _ = strconv.Atoi(matches[sizeIndex])
+				}
+
+				// Sort the anomalies by size (descending)
+				keys := make([]string, 0, len(anomalyTemplates))
+				for key := range anomalyTemplates {
+					keys = append(keys, key)
+				}
+				sort.Slice(keys, func(i, j int) bool { return anomalyTemplates[keys[i]] > anomalyTemplates[keys[j]] })
+
+				if len(anomalyTemplates) > 5 {
+					m.logger.V(2).Info("Trimming anomaly templates to last 5", "checkRun", checkRun.Name, "containerName", containerName)
+					// First 5 anomalies are the most significant ones
+					checkRun.Anomalies[containerName] = keys[:5]
+				} else {
+					checkRun.Anomalies[containerName] = keys
+				}
+
 			} else {
 				m.logger.Info("No anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName)
 			}
@@ -364,7 +386,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 	}
 
 	// Update the check run status
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		// Let's re-fetch the workload hardening check Custom Resource after updating the status so that we have the latest state
 		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
 			if apierrors.IsNotFound(err) {

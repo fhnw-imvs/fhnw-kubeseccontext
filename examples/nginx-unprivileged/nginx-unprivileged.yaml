@@ -3,6 +3,10 @@ apiVersion: v1
 kind: Namespace
 metadata:
   name: oof-nginx-unprivileged
+  labels:
+    app.kubernetes.io/name: oof-nginx-unprivileged
+    app.kubernetes.io/part-of: orakel-of-funk
+    app.kubernetes.io/component: test
 ---
 apiVersion: v1
 kind: ConfigMap
