@@ -35,18 +35,20 @@ data:
 
     # Create the target directory if it does not exist
     mkdir -p "$TARGET_DIR"
-    # Write a file to the target directory
-    echo "[$( date --rfc-3339=s)] This is a test file." > "$TARGET_DIR/test_file.txt"
 
-    # Check if the file was created successfully
-    if [ -f "$TARGET_DIR/test_file.txt" ]; then
-      echo "[$( date --rfc-3339=s)] File created successfully at $TARGET_DIR/test_file.txt"
-    else
-      echo "[$( date --rfc-3339=s)]  Failed to create file."
-      exit 1
-    fi
+    while true
+    do
+      # Write a file to the target directory
+      echo "[$( date --rfc-3339=s)] This is a test file." > "$TARGET_DIR/test_file.txt"
 
-    sleep 600 # Sleep for 10 minutes to keep the script running
+      # Check if the file was created successfully
+      if [ -f "$TARGET_DIR/test_file.txt" ]; then
+        echo "[$( date --rfc-3339=s)] File created successfully at $TARGET_DIR/test_file.txt"
+      else
+        echo "[$( date --rfc-3339=s)]  Failed to create file."
+      fi
+      sleep 5 # Sleep for 5 seconds before writing again
+    done
 ---
 apiVersion: apps/v1
 kind: Deployment

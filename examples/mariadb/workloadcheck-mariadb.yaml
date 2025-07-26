@@ -4,7 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: orakel-of-funk
   name: mariadb
-  namespace: mariadb
+  namespace: oof-mariadb
 spec:
   targetRef:
     apiVersion: apps/v1

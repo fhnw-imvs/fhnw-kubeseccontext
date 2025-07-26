@@ -19,7 +19,6 @@ metadata:
 data:
   test_chown: |
     #! /bin/bash
-    set -e # Exit on error
     set -u # Treat unset variables as an error
     set -o pipefail # Fail on any command in a pipeline that fails
 
@@ -38,15 +37,18 @@ data:
       echo "[$( date --rfc-3339=s)] File $FILE_PATH exists, proceeding to change ownership."
     fi
 
-    # Try to change the ownership of the file
-    chown -v ${2} "$FILE_PATH" || {
-      echo "[$( date --rfc-3339=s)] Error: Failed to change ownership of $FILE_PATH"
-      exit 1
-    }
+    while true
+    do
+      # Try to change the ownership of the file
+      chown -v ${2} "$FILE_PATH" 
+      if [ $? -eq 0 ]; then
+        echo "[$( date --rfc-3339=s)] Ownership of $FILE_PATH changed to root:root successfully."
+      else
+        echo "[$( date --rfc-3339=s)] Error: Failed to change ownership of $FILE_PATH"
+      fi
 
-    echo "[$( date --rfc-3339=s)] Ownership of $FILE_PATH changed to root:root successfully."
-
-    sleep 600 # Sleep for 10 minutes to keep the script running
+      sleep 5 # Sleep for 5 seconds before the next attempt
+    done
 ---
 apiVersion: apps/v1
 kind: Deployment

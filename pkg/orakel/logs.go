@@ -31,21 +31,7 @@ func (dm *LogOrakel) LoadBaseline(input []string) int {
 			continue
 		}
 		dm.BaselineLogsCount++
-		cluster := dm.Drain.Train(strings.TrimSpace(line))
-		if cluster == nil {
-			continue
-		}
-	}
-
-	for _, line := range input {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		dm.BaselineLogsCount++
-		cluster := dm.Drain.Train(strings.TrimSpace(line))
-		if cluster == nil {
-			continue
-		}
+		dm.Drain.Train(strings.TrimSpace(line))
 	}
 
 	return dm.BaselineLogsCount
