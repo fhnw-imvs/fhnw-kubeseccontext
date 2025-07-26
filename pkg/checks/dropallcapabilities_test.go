@@ -1,0 +1,108 @@
+package checks_test
+
+import (
+	"testing"
+
+	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/checks"
+	"github.com/stretchr/testify/assert"
+	corev1 "k8s.io/api/core/v1"
+)
+
+func TestDropAllCapabilitiesCheck(t *testing.T) {
+
+	t.Run("GetType", func(t *testing.T) {
+		check := &checks.DropAllCapabilitiesCheck{}
+		expectedType := "dropAllCapabilities"
+		if check.GetType() != expectedType {
+			t.Errorf("Expected %s, got %s", expectedType, check.GetType())
+		}
+	})
+
+	t.Run("GetSecurityContextDefaults", func(t *testing.T) {
+		check := &checks.DropAllCapabilitiesCheck{}
+
+		baseSecurityContext := &checksv1alpha1.SecurityContextDefaults{
+			Pod:       &checksv1alpha1.PodSecurityContextDefaults{},
+			Container: &checksv1alpha1.ContainerSecurityContextDefaults{},
+		}
+
+		defaults := check.GetSecurityContextDefaults(baseSecurityContext)
+
+		assert.Equal(t, []corev1.Capability{"ALL"}, defaults.Container.CapabilitiesDrop, "Expected CapabilitiesDrop to be set to ALL by default")
+	})
+
+	t.Run("ShouldRunSingleContainer", func(t *testing.T) {
+		check := &checks.DropAllCapabilitiesCheck{}
+		podSpec := &corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					SecurityContext: &corev1.SecurityContext{},
+				},
+			},
+		}
+
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true for AllowPrivilegeEscalation set to true")
+	})
+
+	t.Run("ShouldRunMultipleContainers", func(t *testing.T) {
+		check := &checks.DropAllCapabilitiesCheck{}
+		podSpec := &corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					SecurityContext: &corev1.SecurityContext{
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+					},
+				},
+				{
+					SecurityContext: &corev1.SecurityContext{},
+				},
+			},
+		}
+
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true when at least one container has AllowPrivilegeEscalation set to true")
+	})
+
+	t.Run("ShouldRunNotRunSingleContainer", func(t *testing.T) {
+		check := &checks.DropAllCapabilitiesCheck{}
+		podSpec := &corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					SecurityContext: &corev1.SecurityContext{
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+					},
+				},
+			},
+		}
+
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false for AllowPrivilegeEscalation set to false")
+	})
+
+	t.Run("ShouldRunNotRunMultipleContainers", func(t *testing.T) {
+		check := &checks.DropAllCapabilitiesCheck{}
+		podSpec := &corev1.PodSpec{
+			Containers: []corev1.Container{
+				{
+					SecurityContext: &corev1.SecurityContext{
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+					},
+				},
+				{
+					SecurityContext: &corev1.SecurityContext{
+						Capabilities: &corev1.Capabilities{
+							Drop: []corev1.Capability{"ALL"},
+						},
+					},
+				},
+			},
+		}
+
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false for AllowPrivilegeEscalation set to false")
+	})
+}

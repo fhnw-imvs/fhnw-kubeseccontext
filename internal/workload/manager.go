@@ -26,6 +26,7 @@ import (
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/checks"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/orakel"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -48,6 +49,8 @@ type WorkloadCheckManager struct {
 	logger logr.Logger
 
 	workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck
+
+	allChecks map[string]checks.CheckInterface
 }
 
 func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyClient, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadCheckManager {
@@ -75,6 +78,7 @@ func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyCli
 		logger:                 log,
 		workloadHardeningCheck: workloadHardeningCheck.DeepCopy(),
 		valKeyClient:           valKeyClient,
+		allChecks:              checks.GetAllChecks(),
 	}
 
 	// Let's just set the status as Unknown when no status is available
