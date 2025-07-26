@@ -3,6 +3,8 @@ package workload
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -87,6 +89,26 @@ func mergeContainerSecurityContexts(ctx context.Context, base, extends *corev1.S
 		log.V(3).Info("Merging Capabilities from override into base")
 		merged.Capabilities = extends.Capabilities
 	}
+
+	if merged.Capabilities != nil && extends.Capabilities != nil {
+
+		if merged.Capabilities.Drop == nil && extends.Capabilities.Drop != nil {
+			merged.Capabilities.Drop = extends.Capabilities.Drop
+		}
+
+		if merged.Capabilities.Drop != nil && extends.Capabilities.Drop != nil {
+			// Merge drop capabilities
+			capabilities := append(merged.Capabilities.Drop, extends.Capabilities.Drop...)
+			capabilityMap := make(map[corev1.Capability]bool)
+			for _, cap := range capabilities {
+				capabilityMap[cap] = true
+			}
+			merged.Capabilities.Drop = slices.Collect(maps.Keys(capabilityMap))
+		}
+
+		// Do we need to avoid conflicts with the add capabilities?
+	}
+
 	if merged.Privileged == nil && extends.Privileged != nil {
 		log.V(3).Info("Merging Privileged from override into base")
 		merged.Privileged = extends.Privileged
@@ -112,92 +134,44 @@ func mergeContainerSecurityContexts(ctx context.Context, base, extends *corev1.S
 }
 
 func ApplySecurityContext(ctx context.Context, workloadUnderTest *client.Object, containerSecurityContext *checksv1alpha1.ContainerSecurityContextDefaults, podSecurityContext *checksv1alpha1.PodSecurityContextDefaults) error {
+	var podSpecTemplate *corev1.PodSpec
 	switch v := (*workloadUnderTest).(type) {
 	case *appsv1.Deployment:
-		return ApplyDeploymentSecurityContext(ctx, v, containerSecurityContext, podSecurityContext)
+		podSpecTemplate = &v.Spec.Template.Spec
 	case *appsv1.StatefulSet:
-		return ApplyStatefulSetSecurityContext(ctx, v, containerSecurityContext, podSecurityContext)
+		podSpecTemplate = &v.Spec.Template.Spec
 	case *appsv1.DaemonSet:
-		return ApplyDaemonSetSecurityContext(ctx, v, containerSecurityContext, podSecurityContext)
+		podSpecTemplate = &v.Spec.Template.Spec
+	}
+
+	if podSpecTemplate != nil {
+		applySecurityContext(ctx, podSpecTemplate, containerSecurityContext, podSecurityContext)
+		return nil
 	}
 
 	return fmt.Errorf("kind of workloadUnderTest not supported")
 }
 
-func ApplyDeploymentSecurityContext(ctx context.Context, deployment *appsv1.Deployment, containerSecurityContext *checksv1alpha1.ContainerSecurityContextDefaults, podSecurityContext *checksv1alpha1.PodSecurityContextDefaults) error {
-	if deployment.Spec.Template.Spec.SecurityContext == nil {
-		deployment.Spec.Template.Spec.SecurityContext = podSecurityContext.ToK8sSecurityContext()
+func applySecurityContext(ctx context.Context, podSpec *corev1.PodSpec, containerSecurityContext *checksv1alpha1.ContainerSecurityContextDefaults, podSecurityContext *checksv1alpha1.PodSecurityContextDefaults) {
+	if podSpec.SecurityContext == nil {
+		podSpec.SecurityContext = podSecurityContext.ToK8sSecurityContext()
 	} else {
-		deployment.Spec.Template.Spec.SecurityContext = mergePodSecurityContexts(ctx, deployment.Spec.Template.Spec.SecurityContext, podSecurityContext.ToK8sSecurityContext())
+		podSpec.SecurityContext = mergePodSecurityContexts(ctx, podSpec.SecurityContext, podSecurityContext.ToK8sSecurityContext())
 	}
 
-	for i := range deployment.Spec.Template.Spec.Containers {
-		if deployment.Spec.Template.Spec.Containers[i].SecurityContext == nil {
-			deployment.Spec.Template.Spec.Containers[i].SecurityContext = containerSecurityContext.ToK8sSecurityContext()
+	for i := range podSpec.Containers {
+		if podSpec.Containers[i].SecurityContext == nil {
+			podSpec.Containers[i].SecurityContext = containerSecurityContext.ToK8sSecurityContext()
 		} else {
-			deployment.Spec.Template.Spec.Containers[i].SecurityContext = mergeContainerSecurityContexts(ctx, deployment.Spec.Template.Spec.Containers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
+			podSpec.Containers[i].SecurityContext = mergeContainerSecurityContexts(ctx, podSpec.Containers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
 		}
 	}
 
-	for i := range deployment.Spec.Template.Spec.InitContainers {
-		if deployment.Spec.Template.Spec.InitContainers[i].SecurityContext == nil {
-			deployment.Spec.Template.Spec.InitContainers[i].SecurityContext = containerSecurityContext.ToK8sSecurityContext()
+	for i := range podSpec.InitContainers {
+		if podSpec.InitContainers[i].SecurityContext == nil {
+			podSpec.InitContainers[i].SecurityContext = containerSecurityContext.ToK8sSecurityContext()
 		} else {
-			deployment.Spec.Template.Spec.InitContainers[i].SecurityContext = mergeContainerSecurityContexts(ctx, deployment.Spec.Template.Spec.InitContainers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
+			podSpec.InitContainers[i].SecurityContext = mergeContainerSecurityContexts(ctx, podSpec.InitContainers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
 		}
 	}
-
-	return nil
-}
-
-func ApplyStatefulSetSecurityContext(ctx context.Context, statefulSet *appsv1.StatefulSet, containerSecurityContext *checksv1alpha1.ContainerSecurityContextDefaults, podSecurityContext *checksv1alpha1.PodSecurityContextDefaults) error {
-	if statefulSet.Spec.Template.Spec.SecurityContext == nil {
-		statefulSet.Spec.Template.Spec.SecurityContext = podSecurityContext.ToK8sSecurityContext()
-	} else {
-		statefulSet.Spec.Template.Spec.SecurityContext = mergePodSecurityContexts(ctx, statefulSet.Spec.Template.Spec.SecurityContext, podSecurityContext.ToK8sSecurityContext())
-	}
-
-	for i := range statefulSet.Spec.Template.Spec.Containers {
-		if statefulSet.Spec.Template.Spec.Containers[i].SecurityContext == nil {
-			statefulSet.Spec.Template.Spec.Containers[i].SecurityContext = containerSecurityContext.ToK8sSecurityContext()
-		} else {
-			statefulSet.Spec.Template.Spec.Containers[i].SecurityContext = mergeContainerSecurityContexts(ctx, statefulSet.Spec.Template.Spec.Containers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
-		}
-	}
-
-	for i := range statefulSet.Spec.Template.Spec.InitContainers {
-		if statefulSet.Spec.Template.Spec.InitContainers[i].SecurityContext == nil {
-			statefulSet.Spec.Template.Spec.InitContainers[i].SecurityContext = containerSecurityContext.ToK8sSecurityContext()
-		} else {
-			statefulSet.Spec.Template.Spec.InitContainers[i].SecurityContext = mergeContainerSecurityContexts(ctx, statefulSet.Spec.Template.Spec.InitContainers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
-		}
-	}
-
-	return nil
-}
-
-func ApplyDaemonSetSecurityContext(ctx context.Context, daemonSet *appsv1.DaemonSet, containerSecurityContext *checksv1alpha1.ContainerSecurityContextDefaults, podSecurityContext *checksv1alpha1.PodSecurityContextDefaults) error {
-	if daemonSet.Spec.Template.Spec.SecurityContext == nil {
-		daemonSet.Spec.Template.Spec.SecurityContext = podSecurityContext.ToK8sSecurityContext()
-	} else {
-		daemonSet.Spec.Template.Spec.SecurityContext = mergePodSecurityContexts(ctx, daemonSet.Spec.Template.Spec.SecurityContext, podSecurityContext.ToK8sSecurityContext())
-	}
-
-	for i := range daemonSet.Spec.Template.Spec.Containers {
-		if daemonSet.Spec.Template.Spec.Containers[i].SecurityContext == nil {
-			daemonSet.Spec.Template.Spec.Containers[i].SecurityContext = containerSecurityContext.ToK8sSecurityContext()
-		} else {
-			daemonSet.Spec.Template.Spec.Containers[i].SecurityContext = mergeContainerSecurityContexts(ctx, daemonSet.Spec.Template.Spec.Containers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
-		}
-	}
-
-	for i := range daemonSet.Spec.Template.Spec.InitContainers {
-		if daemonSet.Spec.Template.Spec.InitContainers[i].SecurityContext == nil {
-			daemonSet.Spec.Template.Spec.InitContainers[i].SecurityContext = containerSecurityContext.ToK8sSecurityContext()
-		} else {
-			daemonSet.Spec.Template.Spec.InitContainers[i].SecurityContext = mergeContainerSecurityContexts(ctx, daemonSet.Spec.Template.Spec.InitContainers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
-		}
-	}
-
-	return nil
 }
