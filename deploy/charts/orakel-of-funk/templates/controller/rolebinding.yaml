@@ -1,0 +1,23 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  labels:
+    {{- include "orakel-of-funk.labels" . | nindent 4 }}
+    {{- with .Values.globalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.globalAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  name: orakel-of-funk-leader-election-rolebinding
+  namespace: {{ include "orakel-of-funk.namespace" . }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: orakel-of-funk-leader-election-role
+subjects:
+- kind: ServiceAccount
+  name: {{ include "orakel-of-funk.serviceAccountName" . }}
+  namespace: {{ include "orakel-of-funk.namespace" . }}

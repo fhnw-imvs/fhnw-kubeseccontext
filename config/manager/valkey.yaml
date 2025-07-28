@@ -26,6 +26,13 @@ spec:
       labels:
         app: valkey
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: valkey
         image: valkey/valkey:8
@@ -41,6 +48,29 @@ spec:
           value: "yes"
         ports:
         - containerPort: 6379
+        livenessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "valkey-cli ping | grep PONG"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - sh
+            - -c
+            - "valkey-cli ping | grep PONG"
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          privileged: false
+          capabilities:
+            drop:
+            - "ALL"
         volumeMounts:
         - name: valkey-data
           mountPath: /data

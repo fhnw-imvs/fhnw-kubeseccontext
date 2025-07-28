@@ -1,0 +1,93 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "orakel-of-funk.fullname" . }}
+  namespace: {{ include "orakel-of-funk.namespace" . }}
+  labels:
+    {{- include "orakel-of-funk.labels" . | nindent 4 }}
+    {{- with .Values.globalLabels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.globalAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "orakel-of-funk.selectorLabels" . | nindent 6 }}
+  {{- if not .Values.orakel.autoscaling.enabled }}
+  replicas: {{ .Values.orakel.replicaCount }}
+  {{- end }}
+  template:
+    metadata:
+      {{- with .Values.orakel.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "orakel-of-funk.labels" . | nindent 8 }}
+        {{- with .Values.orakel.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.orakel.podSecurityContext }}
+      securityContext:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "orakel-of-funk.serviceAccountName" . }}
+      containers:
+      - command:
+        - /manager
+        args:
+          - --leader-elect
+          - --health-probe-bind-address=:8081
+          - --metrics-bind-address=:8443
+        image: "{{ .Values.orakel.image.registry }}/{{ .Values.orakel.image.repository }}:{{ .Values.orakel.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.orakel.image.pullPolicy }}
+        name: orkael-of-funk-controller-manager
+        ports:
+        - containerPort: 9443
+          name: webhook-server
+          protocol: TCP
+        {{- with .Values.orakel.securityContext }}
+        securityContext:
+          {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- with .Values.orakel.livenessProbe }}
+        livenessProbe:
+          {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- with .Values.orakel.readinessProbe }}
+        readinessProbe:
+          {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- with .Values.orakel.resources }}
+        resources:
+          {{- toYaml . | nindent 12 }}
+        {{- end }}
+        {{- with .Values.orakel.volumeMounts }}
+        volumeMounts:
+          {{- toYaml . | nindent 12 }}
+        {{- end }}
+      terminationGracePeriodSeconds: 10
+      {{- with .Values.orakel.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.orakel.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.orakel.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.orakel.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

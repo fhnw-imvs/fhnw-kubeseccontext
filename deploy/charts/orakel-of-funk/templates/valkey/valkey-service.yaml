@@ -1,0 +1,28 @@
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: valkey
+  namespace: {{ include "orakel-of-funk.namespace" . }}
+  annotations:
+    {{- with .Values.valkey.service.annotations }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.globalAnnotations }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  labels:
+    {{- with .Values.valkey.service.labels }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.globalLabels }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  selector:
+    app: valkey
+  ports:
+    - protocol: TCP
+      port: {{ .Values.valkey.service.port }}
+      targetPort: 6379
+  type: {{ .Values.valkey.service.type }}
