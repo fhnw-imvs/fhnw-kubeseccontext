@@ -62,7 +62,7 @@ spec:
           mountPath: /data
       volumes:
       - name: valkey-data
-        {{- if .Values.valkey.storage.pvc.enabled }}
+        {{- if .Values.valkey.storage.enabled }}
         persistentVolumeClaim:
           claimName: valkey-pvc
         {{- else }}

@@ -6,6 +6,9 @@ metadata:
     {{- with .Values.globalLabels }}
       {{- toYaml . | nindent 4 }}
     {{- end }}
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
   annotations:
     {{- with .Values.globalAnnotations }}
       {{- toYaml . | nindent 4 }}

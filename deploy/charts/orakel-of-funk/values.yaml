@@ -1,51 +1,52 @@
-# Default values for orakel-of-funk.
-# This is a YAML-formatted file.
-# Declare variables to be passed into your templates.
+# Default values for the orakel-of-funk Helm chart.
+# -- Global values are used to set default values for all charts in the deployment.
 global:
-  # This is for the secrets for pulling an image from a private repository more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/pull-image-private-registry/
   imagePullSecrets: []
 
 
-# This is to override the chart name.
+# -- This is to override the chart name.
 nameOverride: ""
+# -- Override the fullname of the chart.
 fullnameOverride: ""
-namespaceOverride: ""
 
+# -- This is to override the namespace where the chart is deployed.
+namespaceOverride: "orakel-of-funk-system"
+
+# -- Global annotations applied to all resources.
 globalAnnotations: {}
+# -- Global labels applied to all resources.
 globalLabels: {}
 
+# -- The orakel-of-funk controller configuration.
 orakel:
-  # This will set the replicaset count more information can be found here: https://kubernetes.io/docs/concepts/workloads/controllers/replicaset/
   replicaCount: 1
 
-  # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
+  # -- Container image used for the operator
   image:
+    # -- Prefix for the image repository, if you mirror the images to a private registry, you need to set this.
     registry: ghcr.io
     repository: fhnw-imvs/fhnw-kubeseccontext
-    # This sets the pull policy for images.
     pullPolicy: IfNotPresent
-    # Overrides the image tag whose default is the chart appVersion.
+    # -- Overrides the image tag whose default is the chart appVersion.
     tag: 0.0.1
 
-  # This section builds out the service account more information can be found here: https://kubernetes.io/docs/concepts/security/service-accounts/
+  # -- The operator clones a full namespace, and recreates all resources within so the service account needs to have the permissions to do so
   serviceAccount:
-    # Specifies whether a service account should be created
+    # -- Specifies whether a service account should be created
     create: true
-    # Automatically mount a ServiceAccount's API credentials?
+    # -- Automatically mount a ServiceAccount's API credentials?
     automount: true
-    # Annotations to add to the service account
+    # -- Annotations to add to the service account
     annotations: {}
-    # The name of the service account to use.
-    # If not set and create is true, a name is generated using the fullname template
+    # -- The name of the service account to use.
     name: ""
 
-  # This is for setting Kubernetes Annotations to a Pod.
-  # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/annotations/
+  # -- Annotations only added to the pod template, not the deployment
   podAnnotations: {}
-  # This is for setting Kubernetes Labels to a Pod.
-  # For more information checkout: https://kubernetes.io/docs/concepts/overview/working-with-objects/labels/
+  # -- Labels only added to the pod template, not the deployment
   podLabels: {}
 
+  # -- Pod security context for the controller pod, this is configured to pass the "restricted" profile of the Pod Security Standards.
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 2492
@@ -54,30 +55,28 @@ orakel:
     seccompProfile:
       type: RuntimeDefault
 
+  # -- Pod security context for the controller pod, this is configured to pass the "restricted" profile of the Pod Security Standards.
   securityContext:
     allowPrivilegeEscalation: false
     capabilities:
       drop:
       - "ALL"
 
-  # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
+  # -- The operator webhook service, this is used for the admission webhook.
   webhookService:
-    # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
     type: ClusterIP
-    # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
     port: 443
     annotations: {}
     labels: {}
 
-  # This is for setting up a service more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/
+  # -- The metrics service, this is used to scrape metrics from the operator.
   metricsService:
-    # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
     type: ClusterIP
-    # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
     port: 8443
     annotations: {}
     labels: {}
 
+  # -- The default resource usage of the controller pod, this is set to a low value, so that the controller can run on smaller clusters.
   resources: 
     limits:
       cpu: 500m
@@ -86,13 +85,14 @@ orakel:
       cpu: 10m
       memory: 64Mi
 
-  # This is to setup the liveness and readiness probes more information can be found here: https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/
+  # -- Liveness probe using the default /healthz endpoint provided by the controller-runtime library.
   livenessProbe:
     httpGet:
       path: /healthz
       port: 8081
     initialDelaySeconds: 15
     periodSeconds: 20
+  # -- Liveness probe using the default /readyz endpoint provided by the controller-runtime library.
   readinessProbe:
     httpGet:
       path: /readyz
@@ -100,22 +100,14 @@ orakel:
     initialDelaySeconds: 5
     periodSeconds: 10
 
-  # This section is for setting up autoscaling more information can be found here: https://kubernetes.io/docs/concepts/workloads/autoscaling/
-  autoscaling:
-    enabled: false
-    minReplicas: 1
-    maxReplicas: 100
-    targetCPUUtilizationPercentage: 80
-    # targetMemoryUtilizationPercentage: 80
-
-  # Additional volumes on the output Deployment definition.
+  # -- Additional volumes on the output Deployment definition.
   volumes: 
   - name: cert
     secret:
       defaultMode: 420
       secretName: webhook-server-cert
 
-  # Additional volumeMounts on the output Deployment definition.
+  # -- Additional volumeMounts on the output Deployment definition.
   volumeMounts: 
   - mountPath: /tmp/k8s-webhook-server/serving-certs
     name: cert
@@ -127,8 +119,9 @@ orakel:
 
   affinity: {}
 
+# -- Valkey is used to store the baseline and check results before analyzing them, if it is configured without a persistent volume, the data will be lost on pod restart, which could cause the analysis to fail.
 valkey:
-  # This sets the container image more information can be found here: https://kubernetes.io/docs/concepts/containers/images/
+  # -- Image configuration for Valkey
   image:
     registry: ghcr.io
     repository: valkey-io/valkey
@@ -144,19 +137,19 @@ valkey:
       memory: "1Gi"
       cpu: "600m"
 
-  # Environment variables for Valkey
+  # -- Environment variables for Valkey
   env:
     - name: ALLOW_EMPTY_PASSWORD
       value: "yes"
 
+  # -- The valKey service is only used from the operator so it is not exposed outside the cluster.
   service:
-    # This sets the service type more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#publishing-services-service-types
     type: ClusterIP
-    # This sets the ports more information can be found here: https://kubernetes.io/docs/concepts/services-networking/service/#field-spec-ports
     port: 6379
     annotations: {}
     labels: {}
 
+  # -- PodSecurityContext for the Valkey pod, this is configured to pass the "restricted" profile of the Pod Security Standards.
   podSecurityContext:
     runAsNonRoot: true
     runAsUser: 1001
@@ -165,12 +158,14 @@ valkey:
     seccompProfile:
       type: RuntimeDefault
 
+  # -- SecurityContext for the Valkey container, this is configured to pass the "restricted" profile of the Pod Security Standards.
   securityContext:
     allowPrivilegeEscalation: false
     capabilities:
       drop:
       - "ALL"
 
+  # -- Liveness probe for Valkey, these are used to check if the Valkey container is running and ready to accept requests.
   livenessProbe:
     exec:
       command:
@@ -179,6 +174,7 @@ valkey:
       - "valkey-cli ping | grep PONG"
     initialDelaySeconds: 15
     periodSeconds: 20
+  # -- Readiness probes for Valkey, these are used to check if the Valkey container is running and ready to accept requests.
   readinessProbe:
     exec:
       command:
@@ -188,14 +184,13 @@ valkey:
     initialDelaySeconds: 5
     periodSeconds: 10
 
+  # -- Storage configuration for Valkey, this is used to store the data of Valkey, if this is disabled an emptyDir is used, which means that the data will be lost if the pod is scheduled to another node
   storage:
+    enabled: true
     size: 1Gi
-    # Persistent Volume Claim for Valkey
-    pvc:
-      enabled: true
-      name: valkey-pvc
-      accessModes:
-        - ReadWriteOnce
-      storageClassName: ""
-      annotations: {}
-      labels: {}
+    name: valkey-pvc
+    accessModes:
+      - ReadWriteOnce
+    storageClassName: ""
+    annotations: {}
+    labels: {}

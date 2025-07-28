@@ -1,18 +1,18 @@
-{{- if .Values.valkey.storage.pvc.enabled }}
+{{- if .Values.valkey.storage.enabled }}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: {{ .Values.valkey.storage.pvc.name }}
+  name: {{ .Values.valkey.storage.name }}
   namespace: {{ include "orakel-of-funk.namespace" . }}
-  {{- with .Values.valkey.storage.pvc.annotations }}
+  {{- with .Values.valkey.storage.annotations }}
   annotations:
     {{- toYaml . | nindent 4 }}
     {{- with .Values.globalAnnotations }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
   {{- end }}
-  {{- with .Values.valkey.storage.pvc.labels }}
+  {{- with .Values.valkey.storage.labels }}
   labels:
     {{- toYaml . | nindent 4 }}
     {{- with .Values.globalLabels }}
@@ -21,13 +21,13 @@ metadata:
   {{- end }}
 spec:
   accessModes:
-    {{- range .Values.valkey.storage.pvc.accessModes }}
+    {{- range .Values.valkey.storage.accessModes }}
     - {{ . | quote }}
     {{- end }}
   resources:
     requests:
       storage: {{ .Values.valkey.storage.size }}
-  {{- if .Values.valkey.storage.pvc.storageClassName }}
-  storageClassName: {{ .Values.valkey.storage.pvc.storageClassName | quote }}
+  {{- if .Values.valkey.storage.storageClassName }}
+  storageClassName: {{ .Values.valkey.storage.storageClassName | quote }}
   {{- end }}
 {{- end }}
