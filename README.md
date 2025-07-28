@@ -1,7 +1,7 @@
 # K8s Orakel of Funk
 
-<h1 align="center" style="border-bottom: none">
-    <img alt="OrakelOfFunk" src="/docs/images/logo-orakel-of-funk.png"></a>
+<h1 align="left" style="border-bottom: none">
+    <img alt="OrakelOfFunk" src="/docs/images/logo-orakel-of-funk-small.png" width="250">
 </h1>
 
 
