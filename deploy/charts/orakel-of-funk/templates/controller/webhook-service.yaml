@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: "webhook-{{ include "orakel-of-funk.fullname" . }}"
+  namespace: {{ include "orakel-of-funk.namespace" . }}
+  annotations:
+    {{- with .Values.orakel.webhookService.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.globalAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  labels:
+    {{- with .Values.globalAnnotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- with .Values.orakel.webhookService.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+    {{- include "orakel-of-funk.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.orakel.webhookService.type }}
+  ports:
+    - port: {{ .Values.orakel.webhookService.port }}
+      targetPort: 9443
+      protocol: TCP
+      name: http
+  selector:
+    {{- include "orakel-of-funk.selectorLabels" . | nindent 4 }}

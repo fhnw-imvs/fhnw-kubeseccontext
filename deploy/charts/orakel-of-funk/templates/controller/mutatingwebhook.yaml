@@ -1,0 +1,36 @@
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  labels:
+    {{- include "orakel-of-funk.labels" . | nindent 4 }}
+    {{- with .Values.globalLabels }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  annotations:
+    {{- with .Values.globalAnnotations }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+    cert-manager.io/inject-ca-from: "{{ include "orakel-of-funk.namespace" . }}/orakel-of-funk-serving-cert"
+  name: orakel-of-funk-mutating-webhook-configuration
+webhooks:
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-{{ include "orakel-of-funk.fullname" . }}
+      namespace: {{ include "orakel-of-funk.namespace" . }}
+      path: /mutate-checks-funk-fhnw-ch-v1alpha1-workloadhardeningcheck
+  failurePolicy: Fail
+  name: mworkloadhardeningcheck-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - checks.funk.fhnw.ch
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - workloadhardeningchecks
+  sideEffects: None

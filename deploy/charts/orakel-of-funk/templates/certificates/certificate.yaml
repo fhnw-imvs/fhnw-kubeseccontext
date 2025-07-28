@@ -1,0 +1,23 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: orakel-of-funk-serving-cert
+  namespace: {{ include "orakel-of-funk.namespace" . }}
+  labels:
+    {{- include "orakel-of-funk.labels" . | nindent 4 }}
+    {{- with .Values.globalLabels }}
+      {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.globalAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  dnsNames:
+    - "webhook-{{ include "orakel-of-funk.fullname" . }}.{{ include "orakel-of-funk.namespace" . }}.svc"
+    - "webhook-{{ include "orakel-of-funk.fullname" . }}.{{ include "orakel-of-funk.namespace" . }}.svc.cluster.local"
+  issuerRef:
+    kind: Issuer
+    name: orakel-of-funk-selfsigned-issuer
+  secretName: webhook-server-cert

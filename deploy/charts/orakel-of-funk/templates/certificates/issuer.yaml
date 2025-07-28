@@ -1,0 +1,11 @@
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  labels:
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/name: orakel-of-funk
+  name: orakel-of-funk-selfsigned-issuer
+  namespace: {{ include "orakel-of-funk.namespace" . }}
+spec:
+  selfSigned: {}
