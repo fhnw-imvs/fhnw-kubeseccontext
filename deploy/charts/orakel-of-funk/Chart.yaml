@@ -2,6 +2,16 @@ apiVersion: v2
 name: orakel-of-funk
 description: Keep your Kubernetes workloads in tune — secure and functional. 
 type: application
+keywords:
+  - security
+  - compliance
+  - securityContext
+  - hardening
+
+maintainers:
+  - name: Mathias Petermann
+    email: mathias.petermann@students.fhnw.ch
+    url: https://github.com/peschmae
 
 # This is the chart version. This version number should be incremented each time you make changes
 # to the chart and its templates, including the app version.
@@ -13,3 +23,13 @@ version: 0.1.0
 # follow Semantic Versioning. They should reflect the version the application is using.
 # It is recommended to use it with quotes.
 appVersion: "0.1.0"
+
+annotations:
+  artifacthub.io/category: security
+  artifacthub.io/crds: |
+    - kind: WorkloadHardeningCheck
+      version: v1alpha1
+      name: WorkloadHardeningCheck
+      displayName: Workload Hardening Check
+      description: Runs multiple checks to recommend a secure and functional security context for a Kubernetes workload. 
+  artifacthub.io/operator: "true"
