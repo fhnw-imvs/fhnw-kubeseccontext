@@ -203,6 +203,7 @@ const (
 	ConditionTypeWorkloadHardeningCheck = "WorkloadHardeningCheck"
 	ReasonTargetNamespaceNotFound       = "TargetNamespaceNotFound"
 	ReasonNamespaceInProgress           = "InProgress"
+	ReasonWorkloadChecksCreated         = "WorkloadChecksCreated"
 )
 
 // WorkloadHardeningCheckStatus defines the observed state of WorkloadHardeningCheck

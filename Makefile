@@ -117,7 +117,7 @@ test: manifests generate fmt vet envtest ## Run tests.
 .PHONY: proxy-valkey
 proxy-valkey: ## Proxy the valkey server to localhost, to start the controller locally
 	@echo "Forwarding valkey server to localhost"
-	kubectl-n orakel-of-funk-system port-forward svc/valkey 6379:6379
+	kubectl -n orakel-of-funk-system port-forward svc/valkey 6379:6379
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.

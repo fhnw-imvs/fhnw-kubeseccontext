@@ -159,11 +159,6 @@ func (m *WorkloadCheckManager) AllChecksFinished() bool {
 		return false // Baseline must be recorded before checks can be considered finished
 	}
 
-	if len(m.workloadHardeningCheck.Status.CheckRuns) == 1 {
-		// If only the baseline check is present, we consider it not finished
-		return false
-	}
-
 	requiredChecks := m.GetRequiredCheckRuns(context.Background())
 
 	for _, checkType := range requiredChecks {

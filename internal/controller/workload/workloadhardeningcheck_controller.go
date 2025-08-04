@@ -291,6 +291,8 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 		requiredChecks := checkManager.GetRequiredCheckRuns(ctx)
 
+		logger.Info("Required checks to run", "checks", requiredChecks)
+
 		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
@@ -304,7 +306,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			for _, checkType := range requiredChecks {
 
 				if checkManager.CheckRecorded(checkType) {
-					logger.V(2).Info("Check already finished, skipping", "checkType", checkType)
+					logger.Info("Check already finished, skipping", "checkType", checkType)
 					continue // Skip if the check is already recorded
 				}
 
@@ -321,7 +323,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 						logger.Info("Check is overdue, rescheduling", "checkType", checkType)
 
 					} else {
-						logger.V(2).Info("Check still running not yet overdue, skipping", "checkType", checkType)
+						logger.Info("Check still running not yet overdue, skipping", "checkType", checkType)
 						continue // Skip if the check might still be running
 					}
 

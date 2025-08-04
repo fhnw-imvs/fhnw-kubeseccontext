@@ -26,6 +26,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
@@ -125,34 +126,66 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 		})
 	}
 
-	// Create WorkloadHardeningChecks for all top-level resources in the target namespace
-	workloadChecks, err := r.createWorkloadHardeningChecks(ctx, namespaceHardening)
+	topLevelResources, err := r.getTopLevelResourcesToCheck(ctx, namespaceHardening)
 	if err != nil {
-		logger.Error(err, "Failed to create WorkloadHardeningChecks for NamespaceHardeningCheck",
-			"namespace", namespaceHardening.Spec.TargetNamespace)
+		logger.Error(err, "Failed to get top-level resources in target namespace", "namespace", namespaceHardening.Spec.TargetNamespace)
 
 		// ToDo: Need to handle the "no top-level resources found" case differently
 		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionFalse,
+			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ReasonAnalysisFailed,
-			Message: "Failed to create WorkloadHardeningChecks for NamespaceHardeningCheck",
+			Message: "Failed to get top-level resources in target namespace",
 		})
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, err
+	}
+
+	// Filter topLevelResoruces for those compatible with WorkloadHardeningCheck
+	if len(topLevelResources) == 0 {
+		logger.Info("No top-level resources found in target namespace, skipping WorkloadHardeningCheck creation",
+			"namespace", namespaceHardening.Spec.TargetNamespace)
+		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
+			Type:    checksv1alpha1.ConditionTypeFinished,
+			Status:  metav1.ConditionTrue,
+			Reason:  checksv1alpha1.ReasonAnalysisFinished,
+			Message: "No top-level resources found in target namespace, skipping WorkloadHardeningCheck creation",
+		})
+		return ctrl.Result{}, nil
+	}
+
+	workloadChecks := []*checksv1alpha1.WorkloadHardeningCheck{}
+	for _, resource := range topLevelResources {
+		logger.Info("Found top-level resource to check", "kind", resource.GetKind(), "name", resource.GetName(), "namespace", namespaceHardening.Spec.TargetNamespace)
+		// Create a WorkloadHardeningCheck for each top-level resource
+		workloadCheck, err := r.createWorkloadHardeningCheck(ctx, namespaceHardening, resource)
+		if err != nil {
+			logger.Error(err, "Failed to create WorkloadHardeningCheck for top-level resource",
+				"kind", resource.GetKind(), "name", resource.GetName(), "namespace", namespaceHardening.Spec.TargetNamespace)
+			r.Recorder.Eventf(namespaceHardening, corev1.EventTypeWarning, "Failed",
+				"Failed to create WorkloadHardeningCheck for %s/%s in namespace %s: %v",
+				resource.GetKind(), resource.GetName(), namespaceHardening.Spec.TargetNamespace, err)
+
+			continue // Skip this resource and continue with the next one
+		}
+		workloadChecks = append(workloadChecks, workloadCheck)
+
 	}
 
 	if len(workloadChecks) == 0 {
 		logger.Info("No WorkloadHardeningChecks created as they already exist",
 			"namespace", namespaceHardening.Spec.TargetNamespace)
 	} else {
-		for _, check := range workloadChecks {
-			logger.Info("Created WorkloadHardeningCheck", "check", check.Name, "namespace", check.Namespace)
+		r.Recorder.Eventf(namespaceHardening, corev1.EventTypeNormal, "WorkloadChecksCreated",
+			"Created %d WorkloadHardeningChecks for top-level resources in namespace %s",
+			len(workloadChecks), namespaceHardening.Spec.TargetNamespace)
 
-			r.Recorder.Eventf(check, corev1.EventTypeNormal, "Created",
-				"Created WorkloadHardeningCheck %s in namespace %s",
-				check.Name, check.Namespace)
-		}
-
+		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
+			Type:   checksv1alpha1.ConditionTypeFinished,
+			Status: metav1.ConditionFalse,
+			Reason: checksv1alpha1.ReasonWorkloadChecksCreated,
+			Message: fmt.Sprintf("Created %d WorkloadHardeningChecks for top-level resources in namespace %s",
+				len(workloadChecks), namespaceHardening.Spec.TargetNamespace),
+		})
 	}
 
 	// check if all WorkloadHardeningChecks in the namespace are finished
@@ -166,21 +199,24 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 
 	// Check if all WorkloadHardeningChecks are finished
 	allFinished := true
+	finishedCount := 0
 	for _, check := range workloadCheckList.Items {
 		if !meta.IsStatusConditionTrue(check.Status.Conditions, checksv1alpha1.ConditionTypeFinished) {
 			allFinished = false
 			logger.Info("WorkloadHardeningCheck is not finished", "check", check.Name, "namespace", check.Namespace)
-			break
+		} else {
+			finishedCount++
 		}
 	}
 	if !allFinished {
 		logger.Info("Not all WorkloadHardeningChecks are finished, waiting for next reconciliation loop",
 			"namespace", namespaceHardening.Spec.TargetNamespace)
+
 		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonNamespaceInProgress,
-			Message: "NamespaceHardeningCheck is in progress, waiting for WorkloadHardeningChecks to finish",
+			Message: fmt.Sprintf("NamespaceHardeningCheck is in progress, %d/%d finished", finishedCount, len(topLevelResources)),
 		})
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
@@ -213,7 +249,7 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ReasonAnalysisFinished,
-			Message: "All WorkloadHardeningChecks are finished, NamespaceHardeningCheck is complete",
+			Message: "Finished, recommendations ready",
 		})
 		return r.Status().Update(ctx, namespaceHardening)
 	})
@@ -223,11 +259,109 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 	return ctrl.Result{}, nil
 }
 
+func (r *NamespaceHardeningCheckReconciler) createWorkloadHardeningCheck(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck, resource *unstructured.Unstructured) (*checksv1alpha1.WorkloadHardeningCheck, error) {
+	logger := log.FromContext(ctx)
+
+	workloadCheck := &checksv1alpha1.WorkloadHardeningCheck{}
+	if err := r.Get(ctx, client.ObjectKey{
+		Name:      strings.ToLower(resource.GetKind() + "-" + resource.GetName() + "-" + namespaceHardeningCheck.Spec.Suffix),
+		Namespace: namespaceHardeningCheck.Spec.TargetNamespace,
+	}, workloadCheck); err == nil {
+		// WorkloadHardeningCheck already exists, we can skip creating it
+		logger.Info("WorkloadHardeningCheck already exists, skipping creation", "workload", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+		return workloadCheck, nil
+	} else {
+		if !apierrors.IsNotFound(err) {
+			logger.Error(err, "Failed to get existing WorkloadHardeningCheck", "workload", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+			return nil, fmt.Errorf("failed to get existing WorkloadHardeningCheck for %s/%s in namespace %s: %w",
+				resource.GetKind(), resource.GetName(), namespaceHardeningCheck.Spec.TargetNamespace, err)
+		}
+
+		// If the WorkloadHardeningCheck does not exist, we will create it
+		logger.Info("WorkloadHardeningCheck not found, creating new one", "workload", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+	}
+
+	// Create a new WorkloadHardeningCheck for each top-level resource
+	workloadCheck = &checksv1alpha1.WorkloadHardeningCheck{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      strings.ToLower(resource.GetKind() + "-" + resource.GetName() + "-" + namespaceHardeningCheck.Spec.Suffix),
+			Namespace: namespaceHardeningCheck.Spec.TargetNamespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/name":       strings.ToLower(resource.GetKind() + "-" + resource.GetName() + "-" + namespaceHardeningCheck.Spec.Suffix),
+				"app.kubernetes.io/managed-by": "oracle-of-funk",
+				"appkubernetes.io/part-of":     namespaceHardeningCheck.Name,
+			},
+		},
+		Spec: checksv1alpha1.WorkloadHardeningCheckSpec{
+			Suffix: namespaceHardeningCheck.Spec.Suffix + "-" + utilrand.String(8), // Generate a random suffix of 8 characters
+			TargetRef: checksv1alpha1.TargetReference{
+				Kind: resource.GetKind(),
+				Name: resource.GetName(),
+			},
+			RecordingDuration: namespaceHardeningCheck.Spec.RecordingDuration,
+			RunMode:           namespaceHardeningCheck.Spec.RunMode,
+			SecurityContext:   namespaceHardeningCheck.Spec.SecurityContext.DeepCopy(),
+		},
+	}
+
+	// set owner reference to the NamespaceHardeningCheck
+	if err := ctrl.SetControllerReference(namespaceHardeningCheck, workloadCheck, r.Scheme); err != nil {
+		logger.Error(err, "Failed to set controller reference for WorkloadHardeningCheck", "workload", workloadCheck.Spec.TargetRef.Name, "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+	}
+
+	// Create the WorkloadHardeningCheck
+	if err := r.Create(ctx, workloadCheck); err != nil {
+		logger.Error(err, "Failed to create WorkloadHardeningCheck", "workload", workloadCheck.Spec.TargetRef.Name, "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+		return nil, fmt.Errorf("failed to create WorkloadHardeningCheck for %s/%s in namespace %s: %w",
+			workloadCheck.Spec.TargetRef.Kind, workloadCheck.Spec.TargetRef.Name, namespaceHardeningCheck.Spec.TargetNamespace, err)
+	}
+
+	logger.Info("Created WorkloadHardeningCheck", "workload", workloadCheck.Spec.TargetRef.Name, "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+
+	return workloadCheck, nil
+}
+
+func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck) ([]*unstructured.Unstructured, error) {
+	logger := logf.FromContext(ctx).WithName("getTopLevelResourcesToCheck")
+
+	// Fetch all top-level resources in the target namespace
+	allTopLevelResources, err := runner.GetTopLevelResources(ctx, namespaceHardeningCheck.Spec.TargetNamespace)
+	if err != nil {
+		logger.Error(err, "Failed to get top-level resources in target namespace", "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+		return nil, err
+	}
+
+	if len(allTopLevelResources) == 0 {
+		logger.Info("No top-level resources found in target namespace", "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+		return nil, fmt.Errorf("no top-level resources found in target namespace %s", namespaceHardeningCheck.Spec.TargetNamespace)
+	}
+
+	// Filter for resources that are compatible with WorkloadHardeningCheck,
+	// Currently supported are:
+	// - Deployments
+	// - StatefulSets
+	// - DaemonSets
+	usableResources := []*unstructured.Unstructured{}
+	for _, resource := range allTopLevelResources {
+		// Check if the resource is a supported workload type
+		switch resource.GetKind() {
+		case "Deployment", "StatefulSet", "DaemonSet":
+			// These are supported workload types
+			usableResources = append(usableResources, resource)
+		default:
+			// Unsupported workload type, we can skip it
+			logger.Info("Skipping unsupported workload type", "kind", resource.GetKind(), "name", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+		}
+	}
+
+	return usableResources, nil
+}
+
 func (r *NamespaceHardeningCheckReconciler) createWorkloadHardeningChecks(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck) ([]*checksv1alpha1.WorkloadHardeningCheck, error) {
 	logger := logf.FromContext(ctx).WithName("CreateWorkloadHardeningChecks")
 
 	// Fetch all workloads in the target namespace, to do this we fetch all pods, and from there get their parent resources until we get the unowned resource (e.g. Deployment, StatefulSet, DaemonSet, etc.)
-	topLevelResources, err := runner.GetTopLevelResources(ctx, namespaceHardeningCheck.Spec.TargetNamespace)
+	topLevelResources, err := r.getTopLevelResourcesToCheck(ctx, namespaceHardeningCheck)
 	if err != nil {
 		logger.Error(err, "Failed to get top-level resources in target namespace", "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
 		return nil, err
@@ -248,66 +382,8 @@ func (r *NamespaceHardeningCheckReconciler) createWorkloadHardeningChecks(ctx co
 
 	workloadChecks := []*checksv1alpha1.WorkloadHardeningCheck{}
 	for _, resource := range topLevelResources {
-		// Supported resources are Deployment, StatefulSet, DaemonSet
-		if resource.GetKind() == "Deployment" || resource.GetKind() == "StatefulSet" || resource.GetKind() == "DaemonSet" {
-
-			workloadCheck := &checksv1alpha1.WorkloadHardeningCheck{}
-			if err := r.Get(ctx, client.ObjectKey{
-				Name:      strings.ToLower(resource.GetKind() + "-" + resource.GetName() + "-" + namespaceHardeningCheck.Spec.Suffix),
-				Namespace: namespaceHardeningCheck.Spec.TargetNamespace,
-			}, workloadCheck); err == nil {
-				// WorkloadHardeningCheck already exists, we can skip creating it
-				logger.Info("WorkloadHardeningCheck already exists, skipping creation", "workload", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-				continue
-			} else {
-				if !apierrors.IsNotFound(err) {
-					logger.Error(err, "Failed to get existing WorkloadHardeningCheck", "workload", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-					continue
-				}
-
-				// If the WorkloadHardeningCheck does not exist, we will create it
-				logger.Info("WorkloadHardeningCheck not found, creating new one", "workload", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-			}
-
-			// Create a new WorkloadHardeningCheck for each top-level resource
-			workloadCheck = &checksv1alpha1.WorkloadHardeningCheck{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      strings.ToLower(resource.GetKind() + "-" + resource.GetName() + "-" + namespaceHardeningCheck.Spec.Suffix),
-					Namespace: namespaceHardeningCheck.Spec.TargetNamespace,
-					Labels: map[string]string{
-						"app.kubernetes.io/name":       strings.ToLower(resource.GetKind() + "-" + resource.GetName() + "-" + namespaceHardeningCheck.Spec.Suffix),
-						"app.kubernetes.io/managed-by": "oracle-of-funk",
-						"appkubernetes.io/part-of":     namespaceHardeningCheck.Name,
-					},
-				},
-				Spec: checksv1alpha1.WorkloadHardeningCheckSpec{
-					Suffix: namespaceHardeningCheck.Spec.Suffix + "-" + utilrand.String(8), // Generate a random suffix of 8 characters
-					TargetRef: checksv1alpha1.TargetReference{
-						Kind: resource.GetKind(),
-						Name: resource.GetName(),
-					},
-					RecordingDuration: namespaceHardeningCheck.Spec.RecordingDuration,
-					RunMode:           namespaceHardeningCheck.Spec.RunMode,
-					SecurityContext:   namespaceHardeningCheck.Spec.SecurityContext.DeepCopy(),
-				},
-			}
-
-			// set owner reference to the NamespaceHardeningCheck
-			if err := ctrl.SetControllerReference(namespaceHardeningCheck, workloadCheck, r.Scheme); err != nil {
-				logger.Error(err, "Failed to set controller reference for WorkloadHardeningCheck", "workload", workloadCheck.Spec.TargetRef.Name, "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-				continue
-			}
-
-			// Create the WorkloadHardeningCheck
-			if err := r.Create(ctx, workloadCheck); err != nil {
-				logger.Error(err, "Failed to create WorkloadHardeningCheck", "workload", workloadCheck.Spec.TargetRef.Name, "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-				continue
-			}
-
-			logger.Info("Created WorkloadHardeningCheck", "workload", workloadCheck.Spec.TargetRef.Name, "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-
-			workloadChecks = append(workloadChecks, workloadCheck)
-		}
+		workloadCheck, _ := r.createWorkloadHardeningCheck(ctx, namespaceHardeningCheck, resource)
+		workloadChecks = append(workloadChecks, workloadCheck)
 	}
 
 	if len(workloadChecks) == 0 {
