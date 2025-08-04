@@ -101,4 +101,4 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: write-fs
-  baselineDuration: 1m
+  recordingDuration: 1m

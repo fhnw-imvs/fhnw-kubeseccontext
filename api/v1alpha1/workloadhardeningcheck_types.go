@@ -35,10 +35,10 @@ type WorkloadHardeningCheckSpec struct {
 	// +kubebuilder:validation:Required
 	TargetRef TargetReference `json:"targetRef"`
 
-	// BaselineDuration specifies how long to observe the baseline workload before applying hardening tests.
+	// RecordingDuration specifies how long to observe the baseline workload before applying hardening tests.
 	// +kubebuilder:validation:Pattern=`^\d+[smh]$`
 	// +kubebuilder:default="5m"
-	BaselineDuration string `json:"baselineDuration,omitempty"`
+	RecordingDuration string `json:"recordingDuration,omitempty"`
 
 	// RunMode specifies whether the checks should be run in parallel or sequentially.
 	// +kubebuilder:validation:Enum=parallel;sequential
@@ -198,6 +198,11 @@ const (
 	ReasonAnalysisRunning  = "Analyzing"
 	ReasonAnalysisFailed   = "AnalysisFailed"
 	ReasonAnalysisFinished = "AnalysisFinished"
+
+	// NamespaceHardeningCheck Reasons
+	ConditionTypeWorkloadHardeningCheck = "WorkloadHardeningCheck"
+	ReasonTargetNamespaceNotFound       = "TargetNamespaceNotFound"
+	ReasonNamespaceInProgress           = "InProgress"
 )
 
 // WorkloadHardeningCheckStatus defines the observed state of WorkloadHardeningCheck

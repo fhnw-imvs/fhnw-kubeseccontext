@@ -36,11 +36,14 @@ import (
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
+	"k8s.io/klog/v2"
+
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/controller/namespace"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/controller/workload"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 	webhookchecksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/webhook/v1alpha1"
-	"k8s.io/klog/v2"
+	webhookv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -181,6 +184,21 @@ func main() {
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err = webhookchecksv1alpha1.SetupWorkloadHardeningCheckWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "WorkloadHardeningCheck")
+			os.Exit(1)
+		}
+	}
+	if err := (&namespace.NamespaceHardeningCheckReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("namespace-hardening-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "NamespaceHardeningCheck")
+		os.Exit(1)
+	}
+	// nolint:goconst
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := webhookv1alpha1.SetupNamespaceHardeningCheckWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "unable to create webhook", "webhook", "NamespaceHardeningCheck")
 			os.Exit(1)
 		}
 	}

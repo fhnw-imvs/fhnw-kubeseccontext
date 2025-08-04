@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
 - bases/checks.funk.fhnw.ch_workloadhardeningchecks.yaml
+- bases/checks.funk.fhnw.ch_namespacehardeningchecks.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 patches:

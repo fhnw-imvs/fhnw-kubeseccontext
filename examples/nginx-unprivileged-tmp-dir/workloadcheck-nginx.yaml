@@ -16,4 +16,4 @@ spec:
     container:
       runAsUser: 101
       runAsGroup: 101
-  baselineDuration: 1m
+  recordingDuration: 1m

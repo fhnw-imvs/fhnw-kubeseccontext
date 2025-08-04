@@ -286,10 +286,10 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	// If we are here, it means that the baseline recording is done
 	// We can now start recording the workload under test with different security context configurations
 
-	requiredChecks := checkManager.GetRequiredCheckRuns(ctx)
-
 	if checkManager.BaselineRecorded() && !checkManager.AllChecksFinished() {
 		logger.Info("Not all checks are finished, running checks")
+
+		requiredChecks := checkManager.GetRequiredCheckRuns(ctx)
 
 		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
@@ -299,7 +299,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		})
 
 		if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
-			logger.Info("Running checks in parallel mode")
+			logger.V(2).Info("Running checks in parallel mode")
 			// Run all checks in parallel
 			for _, checkType := range requiredChecks {
 
@@ -318,8 +318,10 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 							Message: "Check is still running, but last transition time is older than 2x duration, requeuing",
 						})
 
+						logger.Info("Check is overdue, rescheduling", "checkType", checkType)
+
 					} else {
-						logger.V(2).Info("Check still running, skipping", "checkType", checkType)
+						logger.V(2).Info("Check still running not yet overdue, skipping", "checkType", checkType)
 						continue // Skip if the check might still be running
 					}
 
@@ -446,6 +448,7 @@ func (r *WorkloadHardeningCheckReconciler) SetupWithManager(mgr ctrl.Manager) er
 		// ToDo: Decide if configurable
 		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
 		WithEventFilter(ignoreStatusChanges()).
+		Named("workloadhardeningcheck").
 		Complete(r)
 }
 

@@ -112,6 +112,9 @@ var _ = BeforeSuite(func() {
 	err = SetupWorkloadHardeningCheckWebhookWithManager(mgr)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = SetupNamespaceHardeningCheckWebhookWithManager(mgr)
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:webhook
 
 	go func() {

@@ -146,16 +146,8 @@ func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
 		return fmt.Errorf("failed to get target namespace %s after cloning: %w", targetNamespace, err)
 	}
 
-	// Set the owner reference of the cloned namespace to the workload hardening check
-	err = ctrl.SetControllerReference(
-		r.workloadHardeningCheck,
-		targetNs,
-		r.scheme,
-	)
-
-	if err != nil {
-		r.logger.Error(err, "failed to set controller reference for target namespace")
-	}
+	// While it would be useful to set the owner reference to the workload hardening check,
+	// only cluster wide resources, can claim cluster wide resources as owner.
 
 	return nil
 

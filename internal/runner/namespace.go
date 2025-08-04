@@ -52,7 +52,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 	}
 
 	// only get resources without ownership
-	resources, err := getTopLevelResources(ctx, sourceNamespace)
+	resources, err := GetTopLevelResources(ctx, sourceNamespace)
 	if err != nil {
 		return fmt.Errorf("unable to fetch all resources from %s", sourceNamespace)
 	}
@@ -126,7 +126,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 	return nil
 }
 
-func getTopLevelResources(ctx context.Context, namespace string) ([]*unstructured.Unstructured, error) {
+func GetTopLevelResources(ctx context.Context, namespace string) ([]*unstructured.Unstructured, error) {
 
 	allResources, err := getAllResources(ctx, namespace)
 	if err != nil {

@@ -1,0 +1,27 @@
+# This rule is not used by the project orakel-of-funk itself.
+# It is provided to allow the cluster admin to help manage permissions for users.
+#
+# Grants full permissions ('*') over checks.funk.fhnw.ch.
+# This role is intended for users authorized to modify roles and bindings within the cluster,
+# enabling them to delegate specific permissions to other users or groups as needed.
+
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+    app.kubernetes.io/managed-by: kustomize
+  name: namespacehardeningcheck-admin-role
+rules:
+- apiGroups:
+  - checks.funk.fhnw.ch
+  resources:
+  - namespacehardeningchecks
+  verbs:
+  - '*'
+- apiGroups:
+  - checks.funk.fhnw.ch
+  resources:
+  - namespacehardeningchecks/status
+  verbs:
+  - get

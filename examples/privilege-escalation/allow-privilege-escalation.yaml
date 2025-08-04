@@ -84,4 +84,4 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: allow-priv-escalation
-  baselineDuration: 1m
+  recordingDuration: 1m

@@ -60,7 +60,7 @@ to all ports for non-privileged users.
 This was enabled in containerd 2.0 as default (https://github.com/containerd/containerd/pull/9348) but depends on the Kernel version, after docker/moby already enabled this in 2020 
 (https://github.com/moby/moby/pull/41030). Kubernetes itself doesn't currently enforce a consistent state between container runtimes, which makes this more difficult to test than expected.
 
-As of right now, using Containerd 2.0 with Kernel 4.11+, or docker as teh container runtime, will make both tests pass all checks, but using cri-o or older containerd version will make it fail.
+As of right now, using Containerd 2.0 with Kernel 4.11+, or docker as the container runtime, will make both tests pass all checks, but using cri-o or older containerd version will make it fail.
 
 ### privilege-escalation
 

@@ -47,9 +47,9 @@ spec:
           spec:
             description: WorkloadHardeningCheckSpec defines the desired state of WorkloadHardeningCheck
             properties:
-              baselineDuration:
+              recordingDuration:
                 default: 5m
-                description: BaselineDuration specifies how long to observe the baseline
+                description: RecordingDuration specifies how long to observe the baseline
                   workload before applying hardening tests.
                 pattern: ^\d+[smh]$
                 type: string

@@ -25,3 +25,10 @@ resources:
 - workloadhardeningcheck_editor_role.yaml
 - workloadhardeningcheck_viewer_role.yaml
 
+# For each CRD, "Admin", "Editor" and "Viewer" roles are scaffolded by
+# default, aiding admins in cluster management. Those roles are
+# not used by the orakel-of-funk itself. You can comment the following lines
+# if you do not want those helpers be installed with your Project.
+- namespacehardeningcheck_admin_role.yaml
+- namespacehardeningcheck_editor_role.yaml
+- namespacehardeningcheck_viewer_role.yaml

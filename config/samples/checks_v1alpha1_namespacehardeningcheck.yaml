@@ -1,0 +1,10 @@
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: NamespaceHardeningCheck
+metadata:
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+  name: argocd-namespace-check
+spec:
+  targetNamespace: argocd
+  recordingDuration: 1m
+  suffix: abdc

@@ -144,7 +144,7 @@ func (m *WorkloadCheckManager) CheckOverdue(checkType string) bool {
 
 		// Check if the check is overdue
 		if time.Since(condition.LastTransitionTime.Time) > checkDuration+1*time.Minute { // Adding a buffer of 1 minute
-			m.logger.V(2).Info("Check is overdue", "checkType", checkType, "duration", checkDuration)
+			m.logger.Info("Check is overdue", "checkType", checkType, "duration", checkDuration)
 			return true
 		}
 	}

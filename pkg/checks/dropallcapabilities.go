@@ -1,9 +1,23 @@
 package checks
 
 import (
+	"fmt"
+
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
 )
+
+var capabilityChecks = map[string]CheckInterface{}
+
+// RegisterCapabilityCheck registers a capability check
+func registerCapabilityCheck(capabilityCheck CheckInterface) error {
+	if _, exists := capabilityChecks[capabilityCheck.GetType()]; exists {
+		return fmt.Errorf("check of type %s already registered", capabilityCheck.GetType())
+	}
+
+	capabilityChecks[capabilityCheck.GetType()] = capabilityCheck
+	return nil
+}
 
 type DropAllCapabilitiesCheck struct{}
 
@@ -21,7 +35,7 @@ func (c *DropAllCapabilitiesCheck) GetSecurityContextDefaults(baseSecurityContex
 
 // This check should run if the pod spec does not have ReadOnlyRootFilesystem set
 func (c *DropAllCapabilitiesCheck) ShouldRun(podSpec *corev1.PodSpec) bool {
-	// if any container does not have ReadOnlyRootFilesystem set to true, we should run this check
+	// if any container does not any capabilities dropped, we should run this check
 	for _, container := range podSpec.Containers {
 		if container.SecurityContext != nil {
 			if container.SecurityContext.Capabilities == nil || len(container.SecurityContext.Capabilities.Drop) == 0 {
@@ -29,6 +43,13 @@ func (c *DropAllCapabilitiesCheck) ShouldRun(podSpec *corev1.PodSpec) bool {
 			}
 		} else {
 			return true
+		}
+	}
+
+	// At least one container drops a capability, so we check the capabilityChecks, and if necessary run them
+	for _, capabilityCheck := range capabilityChecks {
+		if capabilityCheck.ShouldRun(podSpec) {
+			RegisterCheck(capabilityCheck)
 		}
 	}
 

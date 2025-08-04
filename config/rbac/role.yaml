@@ -13,6 +13,7 @@ rules:
 - apiGroups:
   - checks.funk.fhnw.ch
   resources:
+  - namespacehardeningchecks
   - workloadhardeningchecks
   verbs:
   - create
@@ -25,12 +26,14 @@ rules:
 - apiGroups:
   - checks.funk.fhnw.ch
   resources:
+  - namespacehardeningchecks/finalizers
   - workloadhardeningchecks/finalizers
   verbs:
   - update
 - apiGroups:
   - checks.funk.fhnw.ch
   resources:
+  - namespacehardeningchecks/status
   - workloadhardeningchecks/status
   verbs:
   - get

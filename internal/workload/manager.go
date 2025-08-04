@@ -521,12 +521,12 @@ func (m *WorkloadCheckManager) GetRecommendedSecurityContext() *checksv1alpha1.S
 
 func (m *WorkloadCheckManager) GetCheckDuration() time.Duration {
 	// Default to 5 minutes if not specified
-	if m.workloadHardeningCheck.Spec.BaselineDuration == "" {
+	if m.workloadHardeningCheck.Spec.RecordingDuration == "" {
 		return 5 * time.Minute
 	}
 
 	// Parse the duration string
-	duration, err := time.ParseDuration(m.workloadHardeningCheck.Spec.BaselineDuration)
+	duration, err := time.ParseDuration(m.workloadHardeningCheck.Spec.RecordingDuration)
 	if err != nil {
 		return 5 * time.Minute // Fallback to default if parsing fails
 	}

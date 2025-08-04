@@ -106,4 +106,4 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: test-chown
-  baselineDuration: 1m
+  recordingDuration: 1m

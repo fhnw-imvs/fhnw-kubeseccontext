@@ -8,4 +8,4 @@ spec:
     apiVersion: apps/v1
     kind: Deployment
     name: nginx-privileged
-  baselineDuration: 1m
+  recordingDuration: 1m
