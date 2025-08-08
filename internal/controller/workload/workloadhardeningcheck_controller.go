@@ -462,8 +462,7 @@ func (r *WorkloadHardeningCheckReconciler) SetupWithManager(mgr ctrl.Manager) er
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&checksv1alpha1.WorkloadHardeningCheck{}).
 		Owns(&corev1.Namespace{}).
-		// ToDo: Decide if configurable
-		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: 2}).
 		WithEventFilter(ignoreStatusChanges()).
 		Named("workloadhardeningcheck").
 		Complete(r)

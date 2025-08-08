@@ -76,7 +76,7 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 	if err != nil {
 		// If the resource is not found it's usually because it was deleted, we need to cleanup remaining resources
 		if apierrors.IsNotFound(err) {
-			return r.cleanupReconcileLoop(ctx, req.Namespace)
+			return r.cleanupReconcileLoop(ctx, req.Name)
 		}
 		// Error reading the object - requeue the request.
 		logger.Error(err, "Failed to get NamespaceHardeningCheck, requeing")
@@ -200,17 +200,16 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 	}
 
 	// Check if all WorkloadHardeningChecks are finished
-	allFinished := true
 	finishedCount := 0
 	for _, check := range workloadCheckList.Items {
 		if !meta.IsStatusConditionTrue(check.Status.Conditions, checksv1alpha1.ConditionTypeFinished) {
-			allFinished = false
 			logger.Info("WorkloadHardeningCheck is not finished", "check", check.Name, "namespace", check.Namespace)
 		} else {
 			finishedCount++
 		}
 	}
-	if !allFinished {
+	// Not all checks are finished, requeue
+	if finishedCount != len(workloadCheckList.Items) {
 		logger.Info("Not all WorkloadHardeningChecks are finished, waiting for next reconciliation loop",
 			"namespace", namespaceHardening.Spec.TargetNamespace)
 
@@ -282,7 +281,7 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ReasonFailed,
-			Message: "Namespace hardening checks failed, some workloads did not become running after applying security context",
+			Message: "Final check run failed, not all workloads are running successfully",
 		})
 	}
 
@@ -307,6 +306,12 @@ func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Cont
 			return false, err
 		}
 	}
+
+	finalCheckNamespaceObj := &corev1.Namespace{}
+	err = r.Get(ctx, types.NamespacedName{Name: finalCheckNamespace}, finalCheckNamespaceObj)
+
+	// Set controller reference to the NamespaceHardeningCheck, to ensure it gets cleaned up automatically
+	ctrl.SetControllerReference(namespaceHardening, finalCheckNamespaceObj, r.Scheme)
 
 	logger.Info("Cloned namespace for final check", "sourceNamespace", namespaceHardening.Spec.TargetNamespace, "finalCheckNamespace", finalCheckNamespace)
 	topLevelResources, err := runner.GetTopLevelResources(ctx, finalCheckNamespace)
@@ -340,6 +345,9 @@ func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Cont
 					time.Sleep(5 * time.Second)
 					r.Get(ctx, types.NamespacedName{Namespace: (*workloadUnderTest).GetNamespace(), Name: (*workloadUnderTest).GetName()}, *workloadUnderTest)
 				}
+			} else {
+				logger.Info("No recommendation found for resource, skipping security context update", "kind", resource.GetKind(), "name", resource.GetName())
+				continue // Skip this resource if no recommendation is found
 			}
 		}
 	}
@@ -356,7 +364,7 @@ Resources:
 				continue // Skip this resource if we can't get the workload
 			}
 
-			for running := false; !running; running, _ = workload.VerifySuccessfullyRunning(*workloadUnderTest) {
+			for running := false; !running; running, _ = workload.VerifyReadiness(*workloadUnderTest, r.Client) {
 				logger.Info("Waiting for workload to be running after security context update", "kind", resource.GetKind(), "name", resource.GetName())
 				time.Sleep(5 * time.Second)
 				r.Get(ctx, types.NamespacedName{Namespace: (*workloadUnderTest).GetNamespace(), Name: (*workloadUnderTest).GetName()}, *workloadUnderTest)
@@ -537,10 +545,10 @@ func (r *NamespaceHardeningCheckReconciler) SetCondition(ctx context.Context, na
 }
 
 // Called if the NamespaceHardeningCheck instance is removed or deleted and we need to clean up the resources
-func (r *NamespaceHardeningCheckReconciler) cleanupReconcileLoop(ctx context.Context, sourceNamespace string) (ctrl.Result, error) {
+func (r *NamespaceHardeningCheckReconciler) cleanupReconcileLoop(ctx context.Context, name string) (ctrl.Result, error) {
 	_ = log.FromContext(ctx).WithName("cleanupReconcileLoop")
 
-	// Delete all WorkloadHardeningCheck instances in the namespace
+	// Check if a namespace belonging to the NamespaceHardeningCheck exists
 
 	return ctrl.Result{}, nil
 }
@@ -551,7 +559,7 @@ func (r *NamespaceHardeningCheckReconciler) SetupWithManager(mgr ctrl.Manager) e
 		For(&checksv1alpha1.NamespaceHardeningCheck{}).
 		Owns(&checksv1alpha1.WorkloadHardeningCheck{}).
 		// ToDo: Decide if configurable
-		WithOptions(controller.Options{MaxConcurrentReconciles: 1}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: 2}).
 		WithEventFilter(ignoreStatusChanges()).
 		Named("namespacehardeningcheck").
 		Complete(r)

@@ -458,7 +458,7 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 	}
 
 	// If pods are crashLooping, we still want to record the metrics and logs, but we will mark the check as unsuccessful
-	r.checkSuccessful, err = wh.VerifySuccessfullyRunning(*workloadUnderTest)
+	r.checkSuccessful, err = wh.VerifyReadiness(*workloadUnderTest, r.Client)
 
 	workloadRecording := recording.WorkloadRecording{
 		Type:      r.checkType,
