@@ -552,7 +552,7 @@ func VerifyUpdated(workloadUnderTest client.Object) (bool, error) {
 	case *appsv1.Deployment:
 		return *v.Spec.Replicas == v.Status.UpdatedReplicas, nil
 	case *appsv1.StatefulSet:
-		return *v.Spec.Replicas == v.Status.UpdatedReplicas, nil
+		return *v.Spec.Replicas == v.Status.CurrentReplicas, nil
 	case *appsv1.DaemonSet:
 		return v.Status.DesiredNumberScheduled == v.Status.UpdatedNumberScheduled, nil
 	}

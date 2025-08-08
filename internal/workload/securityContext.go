@@ -133,7 +133,7 @@ func mergeContainerSecurityContexts(ctx context.Context, base, extends *corev1.S
 	return merged
 }
 
-func ApplySecurityContext(ctx context.Context, workloadUnderTest *client.Object, containerSecurityContext *checksv1alpha1.ContainerSecurityContextDefaults, podSecurityContext *checksv1alpha1.PodSecurityContextDefaults) error {
+func ApplyCheckSecurityContext(ctx context.Context, workloadUnderTest *client.Object, containerSecurityContext *checksv1alpha1.ContainerSecurityContextDefaults, podSecurityContext *checksv1alpha1.PodSecurityContextDefaults) error {
 	var podSpecTemplate *corev1.PodSpec
 	switch v := (*workloadUnderTest).(type) {
 	case *appsv1.Deployment:
@@ -174,4 +174,43 @@ func applySecurityContext(ctx context.Context, podSpec *corev1.PodSpec, containe
 			podSpec.InitContainers[i].SecurityContext = mergeContainerSecurityContexts(ctx, podSpec.InitContainers[i].SecurityContext, containerSecurityContext.ToK8sSecurityContext())
 		}
 	}
+}
+
+func ApplySecurityContext(ctx context.Context, workloadUnderTest *client.Object, containerSecurityContext *corev1.SecurityContext, podSecurityContext *corev1.PodSecurityContext) error {
+	var podSpecTemplate *corev1.PodSpec
+	switch v := (*workloadUnderTest).(type) {
+	case *appsv1.Deployment:
+		podSpecTemplate = &v.Spec.Template.Spec
+	case *appsv1.StatefulSet:
+		podSpecTemplate = &v.Spec.Template.Spec
+	case *appsv1.DaemonSet:
+		podSpecTemplate = &v.Spec.Template.Spec
+	}
+
+	if podSpecTemplate != nil {
+		if podSpecTemplate.SecurityContext == nil {
+			podSpecTemplate.SecurityContext = podSecurityContext
+		} else {
+			podSpecTemplate.SecurityContext = mergePodSecurityContexts(ctx, podSpecTemplate.SecurityContext, podSecurityContext)
+		}
+
+		for i := range podSpecTemplate.Containers {
+			if podSpecTemplate.Containers[i].SecurityContext == nil {
+				podSpecTemplate.Containers[i].SecurityContext = containerSecurityContext
+			} else {
+				podSpecTemplate.Containers[i].SecurityContext = mergeContainerSecurityContexts(ctx, podSpecTemplate.Containers[i].SecurityContext, containerSecurityContext)
+			}
+		}
+
+		for i := range podSpecTemplate.InitContainers {
+			if podSpecTemplate.InitContainers[i].SecurityContext == nil {
+				podSpecTemplate.InitContainers[i].SecurityContext = containerSecurityContext
+			} else {
+				podSpecTemplate.InitContainers[i].SecurityContext = mergeContainerSecurityContexts(ctx, podSpecTemplate.InitContainers[i].SecurityContext, containerSecurityContext)
+			}
+		}
+		return nil
+	}
+
+	return fmt.Errorf("kind of workloadUnderTest not supported")
 }

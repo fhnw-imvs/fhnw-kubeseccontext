@@ -177,6 +177,10 @@ const (
 	// All checks are finished, the comparison of the baseline and the checks is done, and the results are available
 	ConditionTypeFinished = "Finished"
 
+	//
+	ReasonSuccess = "Success"
+	ReasonFailed  = "Failed"
+
 	// Preparation recording states
 	ReasonPreparationVerifying = "Verifying"
 

@@ -30,7 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-type CheckRunner struct {
+type WorkloadCheckRunner struct {
 	client.Client
 	checkManager *wh.WorkloadCheckManager
 
@@ -48,7 +48,7 @@ type CheckRunner struct {
 // Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
 var titleCase = cases.Title(language.English)
 
-func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *CheckRunner {
+func NewWorkloadCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *WorkloadCheckRunner {
 
 	log := log.FromContext(ctx).WithName("CheckRunner").WithValues("checkType", checkType)
 
@@ -77,7 +77,7 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 		return nil
 	}
 
-	checkRunner := &CheckRunner{
+	checkRunner := &WorkloadCheckRunner{
 		Client:                 cl,
 		checkManager:           wh.NewWorkloadCheckManager(ctx, valKeyClient, workloadHardeningCheck),
 		logger:                 log,
@@ -97,7 +97,7 @@ func NewCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, reco
 }
 
 // Create the target namespace name. It consists of the base namespace, the suffix set on the workload hardening check, and the check type.
-func (r *CheckRunner) generateTargetNamespaceName() string {
+func (r *WorkloadCheckRunner) generateTargetNamespaceName() string {
 	base := r.workloadHardeningCheck.Namespace
 	if len(base) > 45 {
 		base = base[:45] // Limit the base namespace to 45 characters to ensure the total length does not exceed 63 characters
@@ -116,7 +116,7 @@ func (r *CheckRunner) generateTargetNamespaceName() string {
 	return namespaceName
 }
 
-func (r *CheckRunner) namespaceExists(ctx context.Context, namespaceName string) bool {
+func (r *WorkloadCheckRunner) namespaceExists(ctx context.Context, namespaceName string) bool {
 	targetNs := &corev1.Namespace{}
 	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
 
@@ -124,7 +124,7 @@ func (r *CheckRunner) namespaceExists(ctx context.Context, namespaceName string)
 }
 
 // createCheckNamespace clones the namespace of the workload hardening check target workload into a new namespace.
-func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
+func (r *WorkloadCheckRunner) createCheckNamespace(ctx context.Context) error {
 	targetNamespace := r.generateTargetNamespaceName()
 
 	err := CloneNamespace(ctx, r.workloadHardeningCheck.Namespace, targetNamespace, r.workloadHardeningCheck.Spec.Suffix)
@@ -153,7 +153,7 @@ func (r *CheckRunner) createCheckNamespace(ctx context.Context) error {
 
 }
 
-func (r *CheckRunner) deleteCheckNamespace(ctx context.Context) error {
+func (r *WorkloadCheckRunner) deleteCheckNamespace(ctx context.Context) error {
 	namespaceName := r.generateTargetNamespaceName()
 
 	log := r.logger.WithValues("namespace", namespaceName)
@@ -177,7 +177,7 @@ func (r *CheckRunner) deleteCheckNamespace(ctx context.Context) error {
 	return nil
 }
 
-func (r *CheckRunner) setStatusRunning(ctx context.Context, message string) {
+func (r *WorkloadCheckRunner) setStatusRunning(ctx context.Context, message string) {
 	conditionReason := checksv1alpha1.ReasonCheckRecording
 	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
 		conditionReason = checksv1alpha1.ReasonBaselineRecording
@@ -191,7 +191,7 @@ func (r *CheckRunner) setStatusRunning(ctx context.Context, message string) {
 	})
 }
 
-func (r *CheckRunner) setStatusFailed(ctx context.Context, message string) {
+func (r *WorkloadCheckRunner) setStatusFailed(ctx context.Context, message string) {
 	conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
 	if strings.Contains(r.checkType, "baseline") {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
@@ -206,7 +206,7 @@ func (r *CheckRunner) setStatusFailed(ctx context.Context, message string) {
 
 }
 
-func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, securityContext *checksv1alpha1.SecurityContextDefaults) {
+func (r *WorkloadCheckRunner) setStatusFinished(ctx context.Context, message string, securityContext *checksv1alpha1.SecurityContextDefaults) {
 	conditionReason := checksv1alpha1.ReasonCheckRecordingFinished
 	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFinished
@@ -287,7 +287,7 @@ func (r *CheckRunner) setStatusFinished(ctx context.Context, message string, sec
 	)
 }
 
-func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alpha1.SecurityContextDefaults) {
+func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alpha1.SecurityContextDefaults) {
 
 	targetNamespaceName := r.generateTargetNamespaceName()
 
@@ -435,7 +435,7 @@ func (r *CheckRunner) RunCheck(ctx context.Context, securityContext *checksv1alp
 }
 
 // waits for pods to be updated and scheduled to nodes, they don't need to be started/running, as they could be in a crash loop if the security context is too strict
-func (r *CheckRunner) waitForUpdatedPods(ctx context.Context, workloadUnderTest *client.Object) (bool, error) {
+func (r *WorkloadCheckRunner) waitForUpdatedPods(ctx context.Context, workloadUnderTest *client.Object) (bool, error) {
 	// We need to ensure that the pods are updated and scheduled to nodes before we can record metrics, they don't need to be started/running, as they could be in a crash loop
 	updated := false
 	startTime := metav1.Now()
@@ -502,7 +502,7 @@ func (r *CheckRunner) waitForUpdatedPods(ctx context.Context, workloadUnderTest 
 	return true, nil
 }
 
-func (r *CheckRunner) applySecurityContext(ctx context.Context, workloadUnderTest *client.Object, securityContext *checksv1alpha1.SecurityContextDefaults) error {
+func (r *WorkloadCheckRunner) applySecurityContext(ctx context.Context, workloadUnderTest *client.Object, securityContext *checksv1alpha1.SecurityContextDefaults) error {
 
 	replicaCount := int32(0)
 	var err error
@@ -538,7 +538,7 @@ func (r *CheckRunner) applySecurityContext(ctx context.Context, workloadUnderTes
 
 			}
 
-			err := wh.ApplySecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
+			err := wh.ApplyCheckSecurityContext(ctx, workloadUnderTest, securityContext.Container, securityContext.Pod)
 			if err != nil {
 				r.logger.Error(err, "failed to apply security context to workload under test")
 
@@ -570,7 +570,7 @@ func (r *CheckRunner) applySecurityContext(ctx context.Context, workloadUnderTes
 	return nil
 }
 
-func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUsageRecord, error) {
+func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUsageRecord, error) {
 	targetNamespace := r.generateTargetNamespaceName()
 
 	labelSelector, err := r.checkManager.GetLabelSelector(ctx)
@@ -681,7 +681,7 @@ func (r *CheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUs
 	return resourceUsageRecords, nil
 }
 
-func (r *CheckRunner) recordLogs(ctx context.Context, previous bool) (map[string][]string, error) {
+func (r *WorkloadCheckRunner) recordLogs(ctx context.Context, previous bool) (map[string][]string, error) {
 	targetNamespace := r.generateTargetNamespaceName()
 
 	labelSelector, err := r.checkManager.GetLabelSelector(ctx)

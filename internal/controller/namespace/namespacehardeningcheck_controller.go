@@ -22,12 +22,14 @@ import (
 	"strings"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
 	"k8s.io/client-go/util/retry"
@@ -41,6 +43,7 @@ import (
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
 )
 
 // NamespaceHardeningCheckReconciler reconciles a NamespaceHardeningCheck object
@@ -130,7 +133,6 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 	if err != nil {
 		logger.Error(err, "Failed to get top-level resources in target namespace", "namespace", namespaceHardening.Spec.TargetNamespace)
 
-		// ToDo: Need to handle the "no top-level resources found" case differently
 		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionTrue,
@@ -221,8 +223,8 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 
-	// All WorkloadHardeningChecks are finished, we can finalize the NamespaceHardeningCheck
-	logger.Info("All WorkloadHardeningChecks are finished, finalizing NamespaceHardeningCheck",
+	// All WorkloadHardeningChecks are finished, we can run a final check with all workloads hardened at once
+	logger.Info("All WorkloadHardeningChecks are finished, creating final check for namespace hardening",
 		"namespace", namespaceHardening.Spec.TargetNamespace)
 
 	recommendations := make(map[string]*checksv1alpha1.Recommendation)
@@ -247,16 +249,164 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 
 		meta.SetStatusCondition(&namespaceHardening.Status.Conditions, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionTrue,
-			Reason:  checksv1alpha1.ReasonAnalysisFinished,
-			Message: "Finished, recommendations ready",
+			Status:  metav1.ConditionFalse,
+			Reason:  checksv1alpha1.ConditionTypeFinalCheck,
+			Message: "Creating final check for namespace hardening",
 		})
 		return r.Status().Update(ctx, namespaceHardening)
 	})
 
-	// TODO(user): your logic here
+	success, err := r.createFinalCheckRun(ctx, namespaceHardening)
+	if err != nil {
+		logger.Error(err, "Failed to create final check run for namespace hardening", "namespace", namespaceHardening.Spec.TargetNamespace)
+		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
+			Type:    checksv1alpha1.ConditionTypeFinished,
+			Status:  metav1.ConditionTrue,
+			Reason:  checksv1alpha1.ConditionTypeFinished,
+			Message: fmt.Sprintf("Failed to create final check run for namespace hardening: %v", err),
+		})
+		return ctrl.Result{}, err
+	}
+
+	if success {
+		logger.Info("Final check run for namespace hardening completed successfully", "namespace", namespaceHardening.Spec.TargetNamespace)
+		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
+			Type:    checksv1alpha1.ConditionTypeFinished,
+			Status:  metav1.ConditionTrue,
+			Reason:  checksv1alpha1.ReasonSuccess,
+			Message: "Namespace hardening checks completed successfully",
+		})
+	} else {
+		logger.Info("Final check run for namespace hardening failed", "namespace", namespaceHardening.Spec.TargetNamespace)
+		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
+			Type:    checksv1alpha1.ConditionTypeFinished,
+			Status:  metav1.ConditionTrue,
+			Reason:  checksv1alpha1.ReasonFailed,
+			Message: "Namespace hardening checks failed, some workloads did not become running after applying security context",
+		})
+	}
 
 	return ctrl.Result{}, nil
+}
+
+func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Context, namespaceHardening *checksv1alpha1.NamespaceHardeningCheck) (bool, error) {
+	logger := log.FromContext(ctx).WithName("createFinalCheckRun")
+
+	finalCheckNamespace := namespaceHardening.Spec.TargetNamespace + "-" + namespaceHardening.Spec.Suffix + "-final"
+	if len(finalCheckNamespace) > 63 {
+		finalCheckNamespace = finalCheckNamespace[:63] // Ensure the namespace name is within the 63 character limit
+	}
+
+	err := runner.CloneNamespace(ctx, namespaceHardening.Spec.TargetNamespace, finalCheckNamespace, namespaceHardening.Spec.Suffix)
+	if err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			logger.Info("Final check namespace already exists, using it", "namespace", finalCheckNamespace)
+			// If the namespace already exists, we can continue with the final check
+		} else {
+			logger.Error(err, "Failed to clone namespace for final check", "namespace", namespaceHardening.Spec.TargetNamespace, "finalCheckNamespace", finalCheckNamespace)
+			return false, err
+		}
+	}
+
+	logger.Info("Cloned namespace for final check", "sourceNamespace", namespaceHardening.Spec.TargetNamespace, "finalCheckNamespace", finalCheckNamespace)
+	topLevelResources, err := runner.GetTopLevelResources(ctx, finalCheckNamespace)
+	if err != nil {
+		logger.Error(err, "Failed to get top-level resources in final check namespace", "namespace", finalCheckNamespace)
+		return false, err
+	}
+
+	// Should be caught way earlier, but just in case
+	if len(topLevelResources) == 0 {
+		logger.Info("No top-level resources found in final check namespace, skipping final check creation",
+			"namespace", finalCheckNamespace)
+		return true, nil
+	}
+
+	// Apply securityContext from recommendations to all relevant resources
+	for _, resource := range topLevelResources {
+		if resource.GetKind() == "Deployment" || resource.GetKind() == "StatefulSet" || resource.GetKind() == "DaemonSet" {
+			workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, resource)
+			if err != nil {
+				logger.Error(err, "Failed to get workload under test for final check", "kind", resource.GetKind(), "name", resource.GetName())
+				continue // Skip this resource if we can't get the workload
+			}
+			// Apply security context from recommendations if available
+			if recommendation, ok := namespaceHardening.Status.Recommendations[resource.GetKind()+"/"+resource.GetName()]; ok {
+				workload.ApplySecurityContext(ctx, workloadUnderTest, recommendation.ContainerSecurityContexts, recommendation.PodSecurityContext)
+
+				r.Update(ctx, *workloadUnderTest)
+				for updated := false; !updated; updated, _ = workload.VerifyUpdated(*workloadUnderTest) {
+					logger.Info("Waiting for workload to be updated with security context", "kind", resource.GetKind(), "name", resource.GetName())
+					time.Sleep(5 * time.Second)
+					r.Get(ctx, types.NamespacedName{Namespace: (*workloadUnderTest).GetNamespace(), Name: (*workloadUnderTest).GetName()}, *workloadUnderTest)
+				}
+			}
+		}
+	}
+
+	// Make sure all resources are successfully running after applying security context
+	startTime := metav1.Now()
+	success := true
+Resources:
+	for _, resource := range topLevelResources {
+		if resource.GetKind() == "Deployment" || resource.GetKind() == "StatefulSet" || resource.GetKind() == "DaemonSet" {
+			workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, resource)
+			if err != nil {
+				logger.Error(err, "Failed to get workload under test for final check", "kind", resource.GetKind(), "name", resource.GetName())
+				continue // Skip this resource if we can't get the workload
+			}
+
+			for running := false; !running; running, _ = workload.VerifySuccessfullyRunning(*workloadUnderTest) {
+				logger.Info("Waiting for workload to be running after security context update", "kind", resource.GetKind(), "name", resource.GetName())
+				time.Sleep(5 * time.Second)
+				r.Get(ctx, types.NamespacedName{Namespace: (*workloadUnderTest).GetNamespace(), Name: (*workloadUnderTest).GetName()}, *workloadUnderTest)
+				if time.Since(startTime.Time) > 2*time.Minute {
+					logger.Error(nil, "Workload did not become running in time after security context update", "kind", resource.GetKind(), "name", resource.GetName())
+					success = false
+					r.Recorder.Eventf(namespaceHardening, corev1.EventTypeWarning, "WorkloadNotRunning",
+						"Workload %s/%s did not become running in time after security context update",
+						resource.GetKind(), resource.GetName())
+					success = false
+					break Resources // Break out of the loop if any workload does not become running in time
+				}
+			}
+		}
+	}
+
+	// delete namespace after final check
+	if err := r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		Name: finalCheckNamespace,
+	}}); err != nil {
+		logger.Error(err, "Failed to delete cloned namespace after final check", "namespace", finalCheckNamespace)
+		return success, fmt.Errorf("failed to delete cloned namespace %s after final check: %w", finalCheckNamespace, err)
+	}
+	logger.Info("Deleted cloned namespace after final check", "namespace", finalCheckNamespace)
+
+	return success, nil
+
+}
+
+func (r *NamespaceHardeningCheckReconciler) GetWorkloadUnderTest(ctx context.Context, resource *unstructured.Unstructured) (*client.Object, error) {
+	logger := log.FromContext(ctx).WithName("GetWorkloadUnderTest")
+
+	var workloadUnderTest client.Object
+	switch resource.GetKind() {
+	case "Deployment":
+		workloadUnderTest = &appsv1.Deployment{}
+	case "StatefulSet":
+		workloadUnderTest = &appsv1.StatefulSet{}
+	case "DaemonSet":
+		workloadUnderTest = &appsv1.DaemonSet{}
+	default:
+		return nil, fmt.Errorf("unsupported workload kind: %s", resource.GetKind())
+	}
+
+	if err := r.Get(ctx, client.ObjectKey{Namespace: resource.GetNamespace(), Name: resource.GetName()}, workloadUnderTest); err != nil {
+		logger.Error(err, "Failed to get workload under test", "kind", resource.GetKind(), "name", resource.GetName())
+		return nil, err
+	}
+
+	return &workloadUnderTest, nil
 }
 
 func (r *NamespaceHardeningCheckReconciler) createWorkloadHardeningCheck(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck, resource *unstructured.Unstructured) (*checksv1alpha1.WorkloadHardeningCheck, error) {
@@ -333,7 +483,7 @@ func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx cont
 
 	if len(allTopLevelResources) == 0 {
 		logger.Info("No top-level resources found in target namespace", "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-		return nil, fmt.Errorf("no top-level resources found in target namespace %s", namespaceHardeningCheck.Spec.TargetNamespace)
+		return []*unstructured.Unstructured{}, nil
 	}
 
 	// Filter for resources that are compatible with WorkloadHardeningCheck,
@@ -355,47 +505,6 @@ func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx cont
 	}
 
 	return usableResources, nil
-}
-
-func (r *NamespaceHardeningCheckReconciler) createWorkloadHardeningChecks(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck) ([]*checksv1alpha1.WorkloadHardeningCheck, error) {
-	logger := logf.FromContext(ctx).WithName("CreateWorkloadHardeningChecks")
-
-	// Fetch all workloads in the target namespace, to do this we fetch all pods, and from there get their parent resources until we get the unowned resource (e.g. Deployment, StatefulSet, DaemonSet, etc.)
-	topLevelResources, err := r.getTopLevelResourcesToCheck(ctx, namespaceHardeningCheck)
-	if err != nil {
-		logger.Error(err, "Failed to get top-level resources in target namespace", "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-		return nil, err
-	}
-
-	// Filter topLevelResoruces for those compatible with WorkloadHardeningCheck
-	if len(topLevelResources) == 0 {
-		logger.Info("No top-level resources found in target namespace, skipping WorkloadHardeningCheck creation",
-			"namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-		r.SetCondition(ctx, namespaceHardeningCheck, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionTrue,
-			Reason:  checksv1alpha1.ReasonAnalysisFinished,
-			Message: "No top-level resources found in target namespace, skipping WorkloadHardeningCheck creation",
-		})
-		return nil, fmt.Errorf("no top-level resources found in target namespace %s", namespaceHardeningCheck.Spec.TargetNamespace)
-	}
-
-	workloadChecks := []*checksv1alpha1.WorkloadHardeningCheck{}
-	for _, resource := range topLevelResources {
-		workloadCheck, _ := r.createWorkloadHardeningCheck(ctx, namespaceHardeningCheck, resource)
-		workloadChecks = append(workloadChecks, workloadCheck)
-	}
-
-	if len(workloadChecks) == 0 {
-		logger.Info("Checks for all top-level resources in target namespace already exist, skipping creation",
-			"namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-		return nil, nil
-	}
-
-	logger.Info("Created WorkloadHardeningChecks for all top-level resources in target namespace",
-		"namespace", namespaceHardeningCheck.Spec.TargetNamespace, "count", len(workloadChecks))
-
-	return workloadChecks, nil
 }
 
 func (r *NamespaceHardeningCheckReconciler) SetCondition(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck, condition metav1.Condition) error {

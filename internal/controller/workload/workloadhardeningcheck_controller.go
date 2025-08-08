@@ -185,7 +185,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		logger.Info("Starting Final check run with recommended security context")
 
 		securityContext := checkManager.GetRecommendedSecurityContext()
-		finalCheckRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "Final")
+		finalCheckRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "Final")
 
 		go finalCheckRunner.RunCheck(ctx, securityContext)
 
@@ -263,7 +263,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		logger.Info("Baseline not recorded yet. Starting baseline recording")
 		// Set the condition to indicate that we are starting the baseline recording
 
-		baselineRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline")
+		baselineRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline")
 		go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
 		checkManager.SetCondition(ctx, metav1.Condition{
@@ -276,7 +276,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		// The baseline is recorded twice, to make the log matching better, as the logs are ingested using different timestamps
 
 		time.Sleep(10 * time.Second) // Sleep for a short duration to allow the first baseline recording to start
-		baselineRunner = runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline-2")
+		baselineRunner = runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline-2")
 		go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
 		// Requeue the reconciliation after the baseline duration, to continue with the next steps
@@ -333,7 +333,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 				securityContext := checkManager.GetSecurityContextForCheckType(checkType)
 
-				checkRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
+				checkRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
 
 				go checkRunner.RunCheck(ctx, securityContext)
 			}
@@ -365,7 +365,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 				}
 
 				securityContext := checkManager.GetSecurityContextForCheckType(checkType)
-				checkRunner := runner.NewCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
+				checkRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
 				logger.Info("Running check", "checkType", checkType)
 				go checkRunner.RunCheck(ctx, securityContext)
 
