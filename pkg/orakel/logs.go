@@ -1,9 +1,18 @@
 package orakel
 
 import (
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/faceair/drain"
+)
+
+var (
+	drainTemplateRegex = regexp.MustCompile(`id=\{\d+\}\s+:\s+size=\{(?P<size>\d+)\}\s+:\s+(?P<template>.*)$`)
+	sizeIndex          = drainTemplateRegex.SubexpIndex("size")
+	templateIndex      = drainTemplateRegex.SubexpIndex("template")
 )
 
 type LogOrakel struct {
@@ -24,6 +33,32 @@ func NewLogOrakel() *LogOrakel {
 		Drain: drain.New(drainConfig),
 	}
 
+}
+
+// GetTemplates returns a map of templates extracted from the trained model
+// The keys are the template strings and the values are the sizes of the clusters
+// The map is sorted by size in descending order
+func (dm *LogOrakel) GetTemplates() []string {
+	// Returns the templates extracted from the trained model
+	// These are the clusters that represent the learned patterns from the baseline logs
+	clusters := dm.Drain.Clusters()
+	templates := make(map[string]int, len(clusters))
+
+	for _, cluster := range dm.Drain.Clusters() {
+		template := strings.TrimSpace(cluster.String())
+
+		matches := drainTemplateRegex.FindStringSubmatch(template)
+		templates[matches[templateIndex]], _ = strconv.Atoi(matches[sizeIndex])
+	}
+
+	// Sort the anomalies by size (descending)
+	keys := make([]string, 0, len(templates))
+	for key := range templates {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return templates[keys[i]] > templates[keys[j]] })
+
+	return keys
 }
 
 // LoadBaseline takes a slice of log lines, trains the drain model with them,

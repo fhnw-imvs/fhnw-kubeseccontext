@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -298,19 +296,16 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 	}
 
 	checkRuns := m.workloadHardeningCheck.Status.CheckRuns
-	// Baseline is also listed as check run
-	if len(checkRuns) <= 0 {
+
+	if len(checkRuns) == 0 {
 		m.logger.V(2).Info("No check runs found in workload hardening check status, skipping analysis")
 		return nil
 	}
+
 	updatedCheckRuns := make(map[string]*checksv1alpha1.CheckRun, len(checkRuns))
 	// Iterate over all check runs and analyze the logs
 	for _, checkRun := range checkRuns {
 		checkRun := checkRun.DeepCopy() // Create a copy to avoid modifying the original
-
-		if strings.Contains(checkRun.Name, "baseline") {
-			continue // Skip baseline check run
-		}
 
 		m.logger.V(2).Info("Analyzing check run", "checkRun", checkRun.Name)
 
@@ -323,7 +318,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			return fmt.Errorf("no recording found for check run %s", checkRun.Name)
 		}
 
-		checkSuccessful := true
+		checkSuccessful := checkRecording.Success // If the pod was crashLooping, the recording will be marked as unsuccessful
 		if checkRun.CheckSuccessfull != nil {
 			checkSuccessful = *checkRun.CheckSuccessfull // Use the existing value if it exists
 		}
@@ -354,29 +349,14 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 				anomalyMiner := orakel.NewLogOrakel()
 				anomalyMiner.LoadBaseline(logs)
 
-				anomalyClusters := anomalyMiner.Clusters()
-				anomalyTemplates := make(map[string]int)
-				for _, cluster := range anomalyClusters {
-					// Convert the template to a string and trim it
-					template := strings.TrimSpace(cluster.String())
-
-					matches := drainTemplateRegex.FindStringSubmatch(template)
-					anomalyTemplates[matches[templateIndex]], _ = strconv.Atoi(matches[sizeIndex])
-				}
-
-				// Sort the anomalies by size (descending)
-				keys := make([]string, 0, len(anomalyTemplates))
-				for key := range anomalyTemplates {
-					keys = append(keys, key)
-				}
-				sort.Slice(keys, func(i, j int) bool { return anomalyTemplates[keys[i]] > anomalyTemplates[keys[j]] })
+				anomalyTemplates := anomalyMiner.GetTemplates()
 
 				if len(anomalyTemplates) > 5 {
 					m.logger.V(2).Info("Trimming anomaly templates to last 5", "checkRun", checkRun.Name, "containerName", containerName)
 					// First 5 anomalies are the most significant ones
-					checkRun.Anomalies[containerName] = keys[:5]
+					checkRun.Anomalies[containerName] = anomalyTemplates[:5]
 				} else {
-					checkRun.Anomalies[containerName] = keys
+					checkRun.Anomalies[containerName] = anomalyTemplates
 				}
 
 			} else {

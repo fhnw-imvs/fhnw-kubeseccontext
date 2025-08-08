@@ -213,7 +213,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			logger.Info("Original workload is not running, marking as failed")
 			err = checkManager.SetCondition(ctx, metav1.Condition{
 				Type:    checksv1alpha1.ConditionTypeFinished,
-				Status:  metav1.ConditionFalse,
+				Status:  metav1.ConditionTrue,
 				Reason:  "OriginalNotRunning",
 				Message: "Original workload is not running, cannot proceed with checks",
 			})
@@ -283,7 +283,22 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
 	}
 
-	// If we are here, it means that the baseline recording is done
+	if checkManager.BaselineRecorded() {
+		for _, baselineRun := range workloadHardening.Status.BaselineRuns {
+			if baselineRun.CheckSuccessfull == nil || !*baselineRun.CheckSuccessfull {
+				logger.Info("Baseline recording failed, we will never get the workload running, aborting further checks")
+				checkManager.SetCondition(ctx, metav1.Condition{
+					Type:    checksv1alpha1.ConditionTypeFinished,
+					Status:  metav1.ConditionTrue,
+					Reason:  checksv1alpha1.ReasonBaselineRecordingFailed,
+					Message: "Baseline recording failed, aborting further checks",
+				})
+				return ctrl.Result{}, nil
+			}
+		}
+	}
+
+	// If we are here, it means that the baseline recording is done successfully
 	// We can now start recording the workload under test with different security context configurations
 
 	if checkManager.BaselineRecorded() && !checkManager.AllChecksFinished() {

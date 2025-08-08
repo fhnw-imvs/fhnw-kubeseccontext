@@ -11,6 +11,7 @@ import (
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 	wh "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/orakel"
 	"github.com/go-logr/logr"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -43,6 +44,8 @@ type WorkloadCheckRunner struct {
 	workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck
 	checkType              string
 	conditionType          string
+
+	checkSuccessful bool
 }
 
 // Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
@@ -191,6 +194,8 @@ func (r *WorkloadCheckRunner) setStatusRunning(ctx context.Context, message stri
 	})
 }
 
+// setStatusFailed sets the status of the check to failed, and sets the condition to unknown
+// Those errors are considered transient, and the check can be retried later
 func (r *WorkloadCheckRunner) setStatusFailed(ctx context.Context, message string) {
 	conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
 	if strings.Contains(r.checkType, "baseline") {
@@ -206,7 +211,73 @@ func (r *WorkloadCheckRunner) setStatusFailed(ctx context.Context, message strin
 
 }
 
-func (r *WorkloadCheckRunner) setStatusFinished(ctx context.Context, message string, securityContext *checksv1alpha1.SecurityContextDefaults) {
+func (r *WorkloadCheckRunner) setStatusFinishedFailure(ctx context.Context, message string, failureReason string, recording recording.WorkloadRecording) {
+	conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
+	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
+		conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
+	}
+
+	err := r.checkManager.SetCondition(ctx, metav1.Condition{
+		Type:    r.conditionType,
+		Status:  metav1.ConditionTrue,
+		Reason:  conditionReason,
+		Message: message,
+	})
+
+	if err != nil {
+		r.logger.Error(err, "Failed to set condition for check")
+	}
+
+	// Load the logs into the log orakel for analysis
+	anomalies := make(map[string][]string)
+	for container, logs := range recording.Logs {
+		logOrakel := orakel.NewLogOrakel()
+		logOrakel.LoadBaseline(logs)
+		anomalies[container] = logOrakel.GetTemplates()
+	}
+
+	checkRun := checksv1alpha1.CheckRun{
+		Name:                 r.checkType,
+		RecordingSuccessfull: ptr.To(false),
+		CheckSuccessfull:     ptr.To(false),
+		SecurityContext:      recording.SecurityContextConfigurations,
+		FailureReason:        failureReason,
+		Anomalies:            anomalies,
+	}
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
+			if apierrors.IsNotFound(err) {
+				r.logger.Info("WorkloadHardeningCheck not found, skipping status update")
+				return nil // If the resource is not found, we can skip the update
+			}
+			r.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
+			return err
+		}
+
+		switch r.conditionType {
+		case checksv1alpha1.ConditionTypeBaseline:
+			if r.workloadHardeningCheck.Status.BaselineRuns == nil {
+				r.workloadHardeningCheck.Status.BaselineRuns = []*checksv1alpha1.CheckRun{}
+			}
+			r.workloadHardeningCheck.Status.BaselineRuns = append(r.workloadHardeningCheck.Status.BaselineRuns, &checkRun)
+
+		case checksv1alpha1.ConditionTypeFinalCheck:
+			r.workloadHardeningCheck.Status.FinalRun = &checkRun
+
+		default:
+			if r.workloadHardeningCheck.Status.CheckRuns == nil {
+				r.workloadHardeningCheck.Status.CheckRuns = make(map[string]*checksv1alpha1.CheckRun)
+			}
+			r.workloadHardeningCheck.Status.CheckRuns[checkRun.Name] = &checkRun
+		}
+
+		return r.Status().Update(ctx, r.workloadHardeningCheck)
+	})
+
+}
+
+func (r *WorkloadCheckRunner) setStatusFinishedSuccessfully(ctx context.Context, message string, securityContext *checksv1alpha1.SecurityContextDefaults) {
 	conditionReason := checksv1alpha1.ReasonCheckRecordingFinished
 	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFinished
@@ -226,6 +297,7 @@ func (r *WorkloadCheckRunner) setStatusFinished(ctx context.Context, message str
 	checkRun := checksv1alpha1.CheckRun{
 		Name:                 r.checkType,
 		RecordingSuccessfull: ptr.To(true),
+		CheckSuccessfull:     ptr.To(r.checkSuccessful),
 		SecurityContext:      securityContext,
 	}
 
@@ -385,9 +457,12 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 		return
 	}
 
+	// If pods are crashLooping, we still want to record the metrics and logs, but we will mark the check as unsuccessful
+	r.checkSuccessful, err = wh.VerifySuccessfullyRunning(*workloadUnderTest)
+
 	workloadRecording := recording.WorkloadRecording{
 		Type:      r.checkType,
-		Success:   true,
+		Success:   r.checkSuccessful,
 		StartTime: startTime,
 		EndTime:   metav1.Now(),
 
@@ -423,7 +498,12 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 	}
 
 	r.logger.Info("recorded signals")
-	r.setStatusFinished(ctx, "Signals recorded successfully", securityContext)
+
+	if r.checkSuccessful {
+		r.setStatusFinishedSuccessfully(ctx, "Signal recording failed", securityContext)
+	} else {
+		r.setStatusFinishedFailure(ctx, "Signal recording failed", "Workload never became ready", workloadRecording)
+	}
 
 	// Cleanup: delete the check namespace after recording
 	err = r.deleteCheckNamespace(ctx)
@@ -445,8 +525,8 @@ func (r *WorkloadCheckRunner) waitForUpdatedPods(ctx context.Context, workloadUn
 
 		// Timeout after 2 minutes if the workload is not updated
 		if time.Since(startTime.Time) > 2*time.Minute {
-			r.logger.Error(fmt.Errorf("timeout while waiting for workload to be running"), "timeout while waiting for workload to be running")
-			r.setStatusFailed(ctx, "Timeout while waiting for workload to be running")
+			r.logger.Error(fmt.Errorf("timeout while waiting for workload to be updated"), "timeout while waiting for workload to be updated")
+			r.setStatusFailed(ctx, "Timeout while waiting for workload to be updated")
 
 			conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
 			if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
@@ -458,7 +538,7 @@ func (r *WorkloadCheckRunner) waitForUpdatedPods(ctx context.Context, workloadUn
 				corev1.EventTypeWarning,
 				conditionReason,
 				fmt.Sprintf(
-					"%sCheck: Timeout while waiting for workloads to be running in namespace %s",
+					"%sCheck: Timeout while waiting for workloads to be updated in namespace %s",
 					r.checkType,
 					(*workloadUnderTest).GetNamespace(),
 				),

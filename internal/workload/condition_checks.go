@@ -44,7 +44,7 @@ func (m *WorkloadCheckManager) BaselineRecorded() bool {
 	m.refreshWorkloadHardeningCheck()
 	if meta.IsStatusConditionTrue(m.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {
 		condition := meta.FindStatusCondition(m.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline)
-		return condition.Reason == checksv1alpha1.ReasonBaselineRecordingFinished
+		return (condition.Reason == checksv1alpha1.ReasonBaselineRecordingFinished) || (condition.Reason == checksv1alpha1.ReasonBaselineRecordingFailed)
 	}
 	return false
 }
@@ -81,7 +81,7 @@ func (m *WorkloadCheckManager) FinalCheckRecorded() bool {
 
 	if meta.IsStatusConditionTrue(m.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck) {
 		condition := meta.FindStatusCondition(m.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeFinalCheck)
-		return condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished
+		return (condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished) || (condition.Reason == checksv1alpha1.ReasonCheckRecordingFailed)
 	}
 	return false
 }
@@ -119,7 +119,7 @@ func (m *WorkloadCheckManager) CheckRecorded(checkType string) bool {
 	conditionType := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
 	if meta.IsStatusConditionTrue(m.workloadHardeningCheck.Status.Conditions, conditionType) {
 		condition := meta.FindStatusCondition(m.workloadHardeningCheck.Status.Conditions, conditionType)
-		return condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished
+		return (condition.Reason == checksv1alpha1.ReasonCheckRecordingFinished) || (condition.Reason == checksv1alpha1.ReasonCheckRecordingFailed)
 	}
 	return false
 }
