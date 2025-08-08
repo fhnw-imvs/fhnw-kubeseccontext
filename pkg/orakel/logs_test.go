@@ -8,24 +8,26 @@ import (
 
 func TestLogOrakel_LoadBaseline(t *testing.T) {
 	t.Run("LoadBaseline with empty input", func(t *testing.T) {
-		dm := NewDrainMiner()
-		count := dm.LoadBaseline([]string{})
-		assert.Equal(t, 0, count, "Expected baseline logs count to be 0")
+		dm := NewLogOrakel()
+		logCount, templateCount := dm.LoadBaseline([]string{})
+		assert.Equal(t, 0, logCount, "Expected baseline logs count to be 0")
+		assert.Equal(t, 0, templateCount, "Expected baseline logs count to be 0")
 	})
 
 	t.Run("LoadBaseline with valid input", func(t *testing.T) {
-		dm := NewDrainMiner()
+		dm := NewLogOrakel()
 		input := []string{"log line 1", "log line 2", "log line 3"}
-		count := dm.LoadBaseline(input)
-		assert.Equal(t, 3, count, "Expected baseline logs count to be 3")
-		assert.Equal(t, 3, dm.BaselineLogsCount, "Expected BaselineLogsCount to be 3")
+		logCount, templateCount := dm.LoadBaseline(input)
+		assert.Equal(t, 3, logCount, "Expected baseline logs count to be 3")
+		assert.Equal(t, templateCount, 1, "Expected logs to be clustered into a single template")
 	})
 
 	t.Run("LoadBaseline with duplicate lines", func(t *testing.T) {
-		dm := NewDrainMiner()
+		dm := NewLogOrakel()
 		input := []string{"log line 1", "log line 1", "log line 2"}
-		count := dm.LoadBaseline(input)
-		assert.Equal(t, 3, count, "Expected baseline logs count to be 3")
+		logCount, templateCount := dm.LoadBaseline(input)
+		assert.Equal(t, 3, logCount, "Expected baseline logs count to be 3")
+		assert.Equal(t, templateCount, 1, "Expected logs to be clustered into a single template")
 	})
 
 }
@@ -33,14 +35,14 @@ func TestLogOrakel_LoadBaseline(t *testing.T) {
 func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 
 	t.Run("AnalyzeLogs with empty input", func(t *testing.T) {
-		dm := NewDrainMiner()
+		dm := NewLogOrakel()
 		result, count := dm.AnalyzeTarget([]string{})
 		assert.Equal(t, 0, len(result), "Expected no anomalies for empty input")
 		assert.Equal(t, 0, count, "Excpected target line count to be 0")
 	})
 
 	t.Run("AnalyzeLogs with valid input", func(t *testing.T) {
-		dm := NewDrainMiner()
+		dm := NewLogOrakel()
 		input := []string{"log line 1", "log line 2", "log line 3"}
 		result, count := dm.AnalyzeTarget(input)
 		assert.Equal(t, 3, len(result), "Expected no anomalies for baseline logs")
@@ -48,7 +50,7 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 	})
 
 	t.Run("AnalyzeLogs without anomalies but matches", func(t *testing.T) {
-		dm := NewDrainMiner()
+		dm := NewLogOrakel()
 		dm.LoadBaseline([]string{"log line 1", "log line 2"})
 		input := []string{"log line 5", "log line 6"} // log lines don't contain the same value, but should match an existing cluster
 		result, count := dm.AnalyzeTarget(input)
@@ -56,8 +58,8 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 		assert.Equal(t, len(input), count, "Expected target line count to be 2")
 	})
 
-	t.Run("AnalyzeLogs with identical baseline/target", func(t *testing.T) {
-		dm := NewDrainMiner()
+	t.Run("AnalyzeLogs with empty baseline", func(t *testing.T) {
+		dm := NewLogOrakel()
 		baselineLogs := []string{
 			"ts=2025-07-07T13:59:39.37824263Z level=info caller=/workspace/cmd/prometheus-config-reloader/main.go:148 msg=\"Starting prometheus-config-reloader\" version=\"(version=0.83.0, branch=, revision=5cf2f5d)\" build_context=\"(go=go1.24.3, platform=linux/amd64, user=, date=20250530-07: 46: 40, tags=unknown)\"",
 			"ts=2025-07-07T13:59:39.378453637Z level=info caller=/workspace/internal/goruntime/cpu.go:27 msg=\"Leaving GOMAXPROCS=12: CPU quota undefined\"",
@@ -67,14 +69,17 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 			"ts=2025-07-07T13:59:39.381626994Z level=info caller=/go/pkg/mod/github.com/prometheus/exporter-toolkit@v0.14.0/web/tls_config.go:347 msg=\"Listening on\" address=[::]:8080",
 			"ts=2025-07-07T13:59:39.38166146Z level=info caller=/go/pkg/mod/github.com/prometheus/exporter-toolkit@v0.14.0/web/tls_config.go:350 msg=\"TLS is disabled.\" http2=false address=[::]:8080",
 		}
-		dm.LoadBaseline(baselineLogs)
+		logCount, templateCount := dm.LoadBaseline([]string{})
+		assert.Equal(t, 0, logCount, "Expected baseline logs count to be 0")
+		assert.Equal(t, 0, templateCount, "Expected baseline logs count to be 0")
+
 		result, count := dm.AnalyzeTarget(baselineLogs)
-		assert.Equal(t, 0, len(result), "Expected one anomaly to be detected")
-		assert.Equal(t, len(baselineLogs), count, "Expected target line count to be 2")
+		assert.Equal(t, len(baselineLogs), len(result), "Expected all logs to be anomalies")
+		assert.Equal(t, len(baselineLogs), count, "Expected all lines to be analyzed")
 	})
 
 	t.Run("AnalyzeLogs with identical baseline/target", func(t *testing.T) {
-		dm := NewDrainMiner()
+		dm := NewLogOrakel()
 		baselineLogs := []string{
 			"ts=2025-07-07T13:59:39.37824263Z level=info caller=/workspace/cmd/prometheus-config-reloader/main.go:148 msg=\"Starting prometheus-config-reloader\" version=\"(version=0.83.0, branch=, revision=5cf2f5d)\" build_context=\"(go=go1.24.3, platform=linux/amd64, user=, date=20250530-07: 46: 40, tags=unknown)\"",
 			"ts=2025-07-07T13:59:39.378453637Z level=info caller=/workspace/internal/goruntime/cpu.go:27 msg=\"Leaving GOMAXPROCS=12: CPU quota undefined\"",
@@ -86,8 +91,8 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 		}
 		dm.LoadBaseline(baselineLogs)
 		result, count := dm.AnalyzeTarget(baselineLogs)
-		assert.Equal(t, 0, len(result), "Expected one anomaly to be detected")
-		assert.Equal(t, len(baselineLogs), count, "Expected target line count to be 2")
+		assert.Equal(t, 0, len(result), "Expected no anomalies")
+		assert.Equal(t, len(baselineLogs), count, "Expected all lines to be analyzed")
 	})
 
 	t.Run("AnalyzeLogs with anomalies", func(t *testing.T) {
@@ -155,8 +160,11 @@ func TestLogOrakel_AnalyzeLogs(t *testing.T) {
 			"time=2025-07-07T14:49:19.918Z level=INFO source=warnings.go:70 msg=\"v1 Endpoints is deprecated in v1.33+; use discovery.k8s.io/v1 EndpointSlice\" component=k8s_client_runtime",
 		}
 
-		dm := NewDrainMiner()
-		dm.LoadBaseline(baselineLogs)
+		dm := NewLogOrakel()
+		logCount, templateCount := dm.LoadBaseline(baselineLogs)
+		assert.Equal(t, len(baselineLogs), logCount, "Expected baseline logs count to match input")
+		assert.Equal(t, 22, templateCount, "Expected logs to be clustered into multiple templates")
+
 		targetLogs := []string{
 			"time=2025-07-07T13:59:39.488Z level=INFO source=main.go:725 msg=\"Starting Prometheus Server\" mode=server version=\"(version=3.4.2, branch=HEAD, revision=b392caf256d7ed36980992496c8a6274e5557d36)\"",
 			"time=2025-07-07T13:59:39.488Z level=INFO source=main.go:730 msg=\"operational information\" build_context=\"(go=go1.24.4, platform=linux/amd64, user=root@f841ca3a6e68, date=20250626-20:51:48, tags=netgo,builtinassets,stringlabels)\" host_details=\"(Linux 6.6.87.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Mon Apr 21 17:08:54 UTC 2025 x86_64 prometheus-server-b48bbcb5c-thzp4 localdomain)\" fd_limits=\"(soft=1048576, hard=1048576)\" vm_limits=\"(soft=unlimited, hard=unlimited)\"",

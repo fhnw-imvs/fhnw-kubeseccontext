@@ -289,7 +289,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			drainMiner, exists := drainMinerPerContainer[containerName]
 			if !exists {
 				// Initialize a new DrainMiner
-				drainMiner = orakel.NewDrainMiner()
+				drainMiner = orakel.NewLogOrakel()
 			}
 
 			drainMiner.LoadBaseline(logs)
@@ -351,7 +351,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 					checkRun.Anomalies = make(map[string][]string)
 				}
 
-				anomalyMiner := orakel.NewDrainMiner()
+				anomalyMiner := orakel.NewLogOrakel()
 				anomalyMiner.LoadBaseline(logs)
 
 				anomalyClusters := anomalyMiner.Clusters()
