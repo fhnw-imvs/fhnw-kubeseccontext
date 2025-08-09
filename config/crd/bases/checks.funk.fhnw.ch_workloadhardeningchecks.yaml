@@ -21,6 +21,9 @@ spec:
     - jsonPath: .status.conditions[?(@.type=="Finished")].status
       name: Finished
       type: string
+    - jsonPath: .spec.suffix
+      name: Suffix
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Finished")].message
       name: Status
       type: string

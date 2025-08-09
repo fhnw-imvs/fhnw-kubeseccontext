@@ -290,8 +290,8 @@ type CheckRun struct {
 	// FailureReason provides a reason for the failure of the check run, if applicable.
 	FailureReason   string              `json:"failureReason,omitempty"`
 	LogAnomalies    map[string][]string `json:"anomalies,omitempty"`
-	CpuDeviation    bool                `json:"cpuDeviation,omitempty"`
-	MemoryDeviation bool                `json:"memoryDeviation,omitempty"`
+	CpuDeviation    *bool               `json:"cpuDeviation,omitempty"`
+	MemoryDeviation *bool               `json:"memoryDeviation,omitempty"`
 }
 
 // Recommendation provides the recommended security contexts for the workload under test.
@@ -309,6 +309,7 @@ type Recommendation struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:printcolumn:name="Finished",type="string",JSONPath=".status.conditions[?(@.type==\"Finished\")].status"
+// +kubebuilder:printcolumn:name="Suffix",type="string",JSONPath=".spec.suffix"
 // +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.type==\"Finished\")].message"
 type WorkloadHardeningCheck struct {
 	metav1.TypeMeta   `json:",inline"`

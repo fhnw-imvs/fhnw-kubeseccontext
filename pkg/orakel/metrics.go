@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
+	"gonum.org/v1/gonum/stat"
 )
 
 type CheckMetricsSummary struct {
@@ -39,16 +40,17 @@ func NewCheckMetricsSummary(metrics []recording.ResourceUsageRecord) *CheckMetri
 
 type MetricsSummary struct {
 	originalValues   []int64
-	normalizedValues []int64
+	normalizedValues []float64 // Normalized values for statistical calculations
 
 	// Absolute values
 	Min int64
 	Max int64
-	Avg int64
+	Avg float64
 
 	// Normalized values
-	Median int64
-	StdDev int64
+	Median   float64
+	StdDev   float64
+	Variance float64
 }
 
 // updateSummary calculates the summary statistics based on the original values
@@ -67,15 +69,16 @@ func (ms *MetricsSummary) updateSummary() {
 	for _, value := range ms.originalValues {
 		total += value
 	}
-	ms.Avg = total / int64(len(ms.originalValues))
+	ms.Avg = float64(total) / float64(len(ms.originalValues))
 
 	// Reset normalized values
-	ms.normalizedValues = make([]int64, len(ms.originalValues))
+	ms.normalizedValues = make([]float64, len(ms.originalValues))
+	// Normalize the original values to the range [0, 1]
 	for i, value := range ms.originalValues {
 		if ms.Max == ms.Min {
 			ms.normalizedValues[i] = 0 // Avoid division by zero
 		} else {
-			ms.normalizedValues[i] = (value - ms.Min) * 100 / (ms.Max - ms.Min)
+			ms.normalizedValues[i] = (float64(value) - float64(ms.Min)) / (float64(ms.Max) - float64(ms.Min))
 		}
 	}
 
@@ -87,14 +90,8 @@ func (ms *MetricsSummary) updateSummary() {
 		ms.Median = ms.normalizedValues[len(ms.normalizedValues)/2]
 	}
 
-	// Calculate standard deviation
-	var variance int64
-	for _, value := range ms.normalizedValues {
-		diff := value - ms.Median
-		variance += diff * diff
-	}
-	ms.StdDev = variance / int64(len(ms.normalizedValues))
-
+	ms.StdDev = stat.StdDev(ms.normalizedValues, nil)
+	ms.Variance = stat.Variance(ms.normalizedValues, nil)
 }
 
 type MetricsOrakel struct {

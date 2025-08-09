@@ -3,6 +3,8 @@ package runner
 import (
 	"context"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -664,9 +666,8 @@ func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.Re
 		return nil, err
 	}
 
-	time.Sleep(1 * time.Second) // Give the workload some time to be ready with the updated security context
+	time.Sleep(2 * time.Second) // Give the workload some time to be ready with the updated security context
 
-	latestGeneration := int64(0)
 	// get pods under observation, we use the label selector from the workload under test
 	pods := &corev1.PodList{}
 PodsAssigned:
@@ -688,10 +689,6 @@ PodsAssigned:
 		if len(pods.Items) > 0 {
 			allAssigned := true
 			for _, pod := range pods.Items {
-				if latestGeneration < pod.ObjectMeta.Generation {
-					// If the generation of the pod is higher than the latest generation we have seen, we update the latest generation
-					latestGeneration = pod.ObjectMeta.Generation
-				}
 				if pod.Spec.NodeName == "" {
 					allAssigned = false
 					break
@@ -709,20 +706,26 @@ PodsAssigned:
 
 	// Filter pods not belonging to the latest generation
 	podsToRecord := []corev1.Pod{}
+	podNames := make(map[string]bool)
 	for _, pod := range pods.Items {
-		if pod.ObjectMeta.Generation < latestGeneration {
+		r.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, &pod)
+
+		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
 			continue
 		}
-		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
+		if pod.ObjectMeta.DeletionTimestamp != nil {
+			// Pod is being deleted, skip it
 			continue
 		}
 
 		podsToRecord = append(podsToRecord, pod)
+		podNames[pod.Name] = true
 	}
 
 	r.logger.Info(
-		"fetched pods matching workload under",
+		"fetched pods matching workload",
 		"numberOfPods", len(podsToRecord),
+		"podsToRecord", slices.Collect(maps.Keys(podNames)),
 	)
 
 	var wg sync.WaitGroup

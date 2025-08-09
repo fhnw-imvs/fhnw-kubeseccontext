@@ -74,6 +74,7 @@ type NamespaceHardeningCheckStatus struct {
 // +kubebuilder:resource:scope=Cluster
 // +kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 // +kubebuilder:printcolumn:name="Finished",type="string",JSONPath=".status.conditions[?(@.type==\"Finished\")].status"
+// +kubebuilder:printcolumn:name="Suffix",type="string",JSONPath=".spec.suffix"
 // +kubebuilder:printcolumn:name="Status",type="string",JSONPath=".status.conditions[?(@.type==\"Finished\")].message"
 
 // NamespaceHardeningCheck is the Schema for the namespacehardeningchecks API
