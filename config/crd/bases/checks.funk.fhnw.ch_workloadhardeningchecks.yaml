@@ -192,10 +192,14 @@ spec:
                         successful or not. A check is considered successful if the
                         workload started and metrics and logs were recorded.
                       type: boolean
+                    cpuDeviation:
+                      type: boolean
                     failureReason:
                       description: FailureReason provides a reason for the failure
                         of the check run, if applicable.
                       type: string
+                    memoryDeviation:
+                      type: boolean
                     name:
                       description: Name of the check run, e.g., "Baseline", "User",
                         "ReadOnlyRootFilesystem", etc.
@@ -304,10 +308,14 @@ spec:
                         successful or not. A check is considered successful if the
                         workload started and metrics and logs were recorded.
                       type: boolean
+                    cpuDeviation:
+                      type: boolean
                     failureReason:
                       description: FailureReason provides a reason for the failure
                         of the check run, if applicable.
                       type: string
+                    memoryDeviation:
+                      type: boolean
                     name:
                       description: Name of the check run, e.g., "Baseline", "User",
                         "ReadOnlyRootFilesystem", etc.
@@ -476,10 +484,14 @@ spec:
                       successful or not. A check is considered successful if the workload
                       started and metrics and logs were recorded.
                     type: boolean
+                  cpuDeviation:
+                    type: boolean
                   failureReason:
                     description: FailureReason provides a reason for the failure of
                       the check run, if applicable.
                     type: string
+                  memoryDeviation:
+                    type: boolean
                   name:
                     description: Name of the check run, e.g., "Baseline", "User",
                       "ReadOnlyRootFilesystem", etc.

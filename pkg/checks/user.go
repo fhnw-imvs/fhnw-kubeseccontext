@@ -19,10 +19,10 @@ func (c *UserCheck) GetSecurityContextDefaults(baseSecurityContext *checksv1alph
 	if baseSecurityContext.Pod.RunAsNonRoot == nil {
 		baseSecurityContext.Pod.RunAsNonRoot = ptr.To(true) // Default to non-root
 	}
+
 	if baseSecurityContext.Container.RunAsUser == nil {
 		baseSecurityContext.Container.RunAsUser = ptr.To(int64(1000)) // Default user ID
 	}
-
 	if baseSecurityContext.Container.RunAsNonRoot == nil {
 		baseSecurityContext.Container.RunAsNonRoot = ptr.To(true) // Default to non-root
 	}

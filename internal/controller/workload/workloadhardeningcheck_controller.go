@@ -174,7 +174,18 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// If the final check run is already running, we need to wait for it to finish
 	if checkManager.FinalCheckInProgress() {
-		logger.Info("Final check run is still running, waiting for it to finish")
+
+		if checkManager.FinalCheckOverdue() {
+			logger.Info("FinalCheck recording is overdue, requeuing reconciliation")
+			checkManager.SetCondition(ctx, metav1.Condition{
+				Type:    checksv1alpha1.ConditionTypeFinalCheck,
+				Status:  metav1.ConditionUnknown,
+				Reason:  checksv1alpha1.ReasonRequeue,
+				Message: "Final check recording is still running, but last transition time is older than 2x duration, requeuing",
+			})
+		} else {
+			logger.Info("Final check run is still running, waiting for it to finish")
+		}
 
 		return ctrl.Result{RequeueAfter: checkManager.GetCheckDuration() / 2}, nil
 	}
@@ -244,7 +255,6 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	// If there is no Baseline recorded yet, we need to start the baseline recording
 
 	if checkManager.BaselineInProgress() {
-		logger.Info("Baseline not recorded yet, waiting for baseline recording to finish")
 		// If the baseline is not recorded yet, we need to wait for the baseline recording to finish
 		if checkManager.BaselineOverdue() {
 			logger.Info("Baseline recording is overdue, requeuing reconciliation")
@@ -254,6 +264,8 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 				Reason:  checksv1alpha1.ReasonRequeue,
 				Message: "Baseline recording is still running, but last transition time is older than 2x duration, requeuing",
 			})
+		} else {
+			logger.Info("Baseline not recorded yet, waiting for baseline recording to finish")
 		}
 
 		return ctrl.Result{RequeueAfter: duration / 2}, nil

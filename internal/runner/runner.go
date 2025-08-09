@@ -242,7 +242,7 @@ func (r *WorkloadCheckRunner) setStatusFinishedFailure(ctx context.Context, mess
 		CheckSuccessfull:     ptr.To(false),
 		SecurityContext:      recording.SecurityContextConfigurations,
 		FailureReason:        failureReason,
-		Anomalies:            anomalies,
+		LogAnomalies:         anomalies,
 	}
 
 	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -406,11 +406,16 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 		return
 	}
 
-	err = r.applySecurityContext(ctx, workloadUnderTest, securityContext)
-	if err != nil {
-		r.logger.Error(err, "failed to apply security context to workload under test")
-		r.setStatusFailed(ctx, "Failed to apply security context to workload under test")
-		return
+	// Eg. Baseline checks, or final checks if nothing need to be applied
+	if securityContext.IsEmpty() {
+		r.logger.V(2).Info("Security context is empty, nothing to apply")
+	} else {
+		err = r.applySecurityContext(ctx, workloadUnderTest, securityContext)
+		if err != nil {
+			r.logger.Error(err, "failed to apply security context to workload under test")
+			r.setStatusFailed(ctx, "Failed to apply security context to workload under test")
+			return
+		}
 	}
 
 	// We need to ensure that the pods are updated and scheduled to nodes before we can record metrics
@@ -500,7 +505,7 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 	r.logger.Info("recorded signals")
 
 	if r.checkSuccessful {
-		r.setStatusFinishedSuccessfully(ctx, "Signal recording failed", securityContext)
+		r.setStatusFinishedSuccessfully(ctx, "Check finished successfully", securityContext)
 	} else {
 		r.setStatusFinishedFailure(ctx, "Signal recording failed", "Workload never became ready", workloadRecording)
 	}
@@ -584,18 +589,18 @@ func (r *WorkloadCheckRunner) waitForUpdatedPods(ctx context.Context, workloadUn
 
 func (r *WorkloadCheckRunner) applySecurityContext(ctx context.Context, workloadUnderTest *client.Object, securityContext *checksv1alpha1.SecurityContextDefaults) error {
 
-	replicaCount := int32(0)
+	originalReplicaCount := int32(0)
 	var err error
 	// Daemonsets can't be scaled down, so we just apply the security context to them
 	if strings.ToLower(r.workloadHardeningCheck.Spec.TargetRef.Kind) != "daemonset" {
 
-		replicaCount, err = r.checkManager.GetReplicaCount(ctx, (*workloadUnderTest).GetNamespace())
+		originalReplicaCount, err = r.checkManager.GetReplicaCount(ctx, (*workloadUnderTest).GetNamespace())
 		// If there's an error getting the replica count, we log it but continue without scaling down
 		if err != nil {
 			r.logger.Error(err, "failed to get replica count for workload under test")
 		}
-		if replicaCount > 0 && err == nil {
-			r.logger.V(1).Info("Scaling target workload to 0", "originalReplicaCount", replicaCount)
+		if originalReplicaCount > 0 && err == nil {
+			r.logger.V(1).Info("Scaling target workload to 0", "originalReplicaCount", originalReplicaCount)
 			r.checkManager.ScaleWorkloadUnderTest(ctx, (*workloadUnderTest).GetNamespace(), 0)
 		}
 
@@ -638,9 +643,9 @@ func (r *WorkloadCheckRunner) applySecurityContext(ctx context.Context, workload
 	}
 
 	// Scale the workload under test to the original replica count
-	if strings.ToLower(r.workloadHardeningCheck.Spec.TargetRef.Kind) != "daemonset" && replicaCount > 0 {
-		r.logger.V(1).Info("scaling workload to original replica count", "replicaCount", replicaCount)
-		err = r.checkManager.ScaleWorkloadUnderTest(ctx, (*workloadUnderTest).GetNamespace(), replicaCount)
+	if strings.ToLower(r.workloadHardeningCheck.Spec.TargetRef.Kind) != "daemonset" && originalReplicaCount > 0 {
+		r.logger.V(1).Info("scaling workload to original replica count", "replicaCount", originalReplicaCount)
+		err = r.checkManager.ScaleWorkloadUnderTest(ctx, (*workloadUnderTest).GetNamespace(), originalReplicaCount)
 		if err != nil {
 			r.logger.Error(err, "failed to scale workload under test to original replica count")
 			return err
@@ -651,6 +656,7 @@ func (r *WorkloadCheckRunner) applySecurityContext(ctx context.Context, workload
 }
 
 func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.ResourceUsageRecord, error) {
+
 	targetNamespace := r.generateTargetNamespaceName()
 
 	labelSelector, err := r.checkManager.GetLabelSelector(ctx)
@@ -663,6 +669,7 @@ func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.Re
 	latestGeneration := int64(0)
 	// get pods under observation, we use the label selector from the workload under test
 	pods := &corev1.PodList{}
+PodsAssigned:
 	for len(pods.Items) == 0 {
 		err = r.List(
 			ctx,
@@ -681,7 +688,7 @@ func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.Re
 		if len(pods.Items) > 0 {
 			allAssigned := true
 			for _, pod := range pods.Items {
-				if pod.ObjectMeta.Generation > latestGeneration {
+				if latestGeneration < pod.ObjectMeta.Generation {
 					// If the generation of the pod is higher than the latest generation we have seen, we update the latest generation
 					latestGeneration = pod.ObjectMeta.Generation
 				}
@@ -691,11 +698,12 @@ func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.Re
 				}
 			}
 			if allAssigned {
-				break // All pods are assigned to a node, we can proceed
+				break PodsAssigned // All pods are assigned to a node, we can proceed
 			}
 
 			pods = &corev1.PodList{} // reset podList to retry fetching
 			r.logger.Info("Pods are not assigned to a node yet, retrying")
+			time.Sleep(1 * time.Second) // Wait for 1 second before retrying
 		}
 	}
 
@@ -703,6 +711,9 @@ func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.Re
 	podsToRecord := []corev1.Pod{}
 	for _, pod := range pods.Items {
 		if pod.ObjectMeta.Generation < latestGeneration {
+			continue
+		}
+		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
 			continue
 		}
 
@@ -755,7 +766,7 @@ func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.Re
 	}
 	r.logger.V(1).Info("collected metrics")
 	if len(resourceUsageRecords) == 0 {
-		r.logger.Info("no resource usage records found, nothing to store")
+		r.logger.Info("no resource usage metrics recoded, this could be due to the workload not being ready or not having any resource usage metrics available")
 	}
 
 	return resourceUsageRecords, nil

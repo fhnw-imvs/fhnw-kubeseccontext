@@ -78,6 +78,22 @@ type SecurityContextDefaults struct {
 	Container *ContainerSecurityContextDefaults `json:"container,omitempty"`
 }
 
+func (s *SecurityContextDefaults) IsEmpty() bool {
+	if s == nil {
+		return true
+	}
+	if s.Pod == nil && s.Container == nil {
+		return true
+	}
+	if s.Pod != nil && !s.Pod.IsEmpty() {
+		return false
+	}
+	if s.Container != nil && !s.Container.IsEmpty() {
+		return false
+	}
+	return true
+}
+
 // PodSecurityContextDefaults specifies the fields for the Pod-level security context.
 type PodSecurityContextDefaults struct {
 	FSGroup            *int64  `json:"fsGroup,omitempty"`
@@ -88,6 +104,16 @@ type PodSecurityContextDefaults struct {
 
 	// SeccompProfile type (e.g., RuntimeDefault, Localhost, Unconfined).
 	SeccompProfile *SeccompProfile `json:"seccompProfile,omitempty"`
+}
+
+func (p *PodSecurityContextDefaults) IsEmpty() bool {
+	if p == nil {
+		return true
+	}
+	if p.FSGroup != nil || p.RunAsUser != nil || p.RunAsGroup != nil || p.RunAsNonRoot != nil || len(p.SupplementalGroups) > 0 || (p.SeccompProfile != nil && p.SeccompProfile.Type != "") {
+		return false
+	}
+	return true
 }
 
 func (p *PodSecurityContextDefaults) ToK8sSecurityContext() *corev1.PodSecurityContext {
@@ -121,6 +147,17 @@ type ContainerSecurityContextDefaults struct {
 	SeccompProfile           *SeccompProfile     `json:"seccompProfile,omitempty"`
 	RunAsUser                *int64              `json:"runAsUser,omitempty"`
 	RunAsGroup               *int64              `json:"runAsGroup,omitempty"`
+}
+
+// IsEmpty checks if the ContainerSecurityContextDefaults is empty.
+func (c *ContainerSecurityContextDefaults) IsEmpty() bool {
+	if c == nil {
+		return true
+	}
+	if c.RunAsNonRoot != nil || c.ReadOnlyRootFilesystem != nil || c.AllowPrivilegeEscalation != nil || len(c.CapabilitiesDrop) > 0 || (c.SeccompProfile != nil && c.SeccompProfile.Type != "") || c.RunAsUser != nil || c.RunAsGroup != nil {
+		return false
+	}
+	return true
 }
 
 func (c *ContainerSecurityContextDefaults) ToK8sSecurityContext() *corev1.SecurityContext {
@@ -251,8 +288,10 @@ type CheckRun struct {
 	// SecurityContext which was applied for this check run.
 	SecurityContext *SecurityContextDefaults `json:"securityContext,omitempty"`
 	// FailureReason provides a reason for the failure of the check run, if applicable.
-	FailureReason string              `json:"failureReason,omitempty"`
-	Anomalies     map[string][]string `json:"anomalies,omitempty"`
+	FailureReason   string              `json:"failureReason,omitempty"`
+	LogAnomalies    map[string][]string `json:"anomalies,omitempty"`
+	CpuDeviation    bool                `json:"cpuDeviation,omitempty"`
+	MemoryDeviation bool                `json:"memoryDeviation,omitempty"`
 }
 
 // Recommendation provides the recommended security contexts for the workload under test.

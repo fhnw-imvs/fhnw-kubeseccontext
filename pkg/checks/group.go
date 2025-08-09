@@ -13,16 +13,23 @@ func (c *GroupCheck) GetType() string {
 }
 
 func (c *GroupCheck) GetSecurityContextDefaults(baseSecurityContext *checksv1alpha1.SecurityContextDefaults) *checksv1alpha1.SecurityContextDefaults {
+	if baseSecurityContext.Pod.RunAsUser == nil {
+		baseSecurityContext.Pod.RunAsUser = ptr.To(int64(1000)) // Default user ID
+	}
+
 	if baseSecurityContext.Pod.RunAsGroup == nil {
-		baseSecurityContext.Pod.RunAsGroup = ptr.To(int64(1000)) // Default group ID
+		baseSecurityContext.Pod.RunAsGroup = baseSecurityContext.Pod.RunAsUser
 	}
 
 	if baseSecurityContext.Pod.FSGroup == nil {
-		baseSecurityContext.Pod.FSGroup = ptr.To(int64(1000)) // Default group ID
+		baseSecurityContext.Pod.FSGroup = baseSecurityContext.Pod.RunAsGroup
 	}
 
+	if baseSecurityContext.Container.RunAsUser == nil {
+		baseSecurityContext.Container.RunAsUser = ptr.To(int64(1000)) // Default user ID
+	}
 	if baseSecurityContext.Container.RunAsGroup == nil {
-		baseSecurityContext.Container.RunAsGroup = ptr.To(int64(1000)) // Default group ID
+		baseSecurityContext.Container.RunAsGroup = baseSecurityContext.Container.RunAsUser
 	}
 
 	return baseSecurityContext

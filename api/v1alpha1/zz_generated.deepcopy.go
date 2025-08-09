@@ -44,8 +44,8 @@ func (in *CheckRun) DeepCopyInto(out *CheckRun) {
 		*out = new(SecurityContextDefaults)
 		(*in).DeepCopyInto(*out)
 	}
-	if in.Anomalies != nil {
-		in, out := &in.Anomalies, &out.Anomalies
+	if in.LogAnomalies != nil {
+		in, out := &in.LogAnomalies, &out.LogAnomalies
 		*out = make(map[string][]string, len(*in))
 		for key, val := range *in {
 			var outVal []string

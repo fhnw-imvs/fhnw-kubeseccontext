@@ -229,7 +229,6 @@ func (m *WorkloadCheckManager) GetWorkloadUnderTest(ctx context.Context, namespa
 		m.logger.Error(err, "failed to get workloadHardeningCheck.Spec.TargetRef, requeing")
 		return nil, fmt.Errorf("failed to get workloadHardeningCheck.Spec.TargetRef: %w", err)
 	}
-	m.logger.Info("TargetRef found")
 
 	return &workloadUnderTest, nil
 }
@@ -267,7 +266,8 @@ func (m *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Sel
 func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 
 	// Contains a drainMiner for each container in the baseline recording
-	drainMinerPerContainer := make(map[string]*orakel.LogOrakel)
+	logOraclePerContainer := make(map[string]*orakel.LogOrakel)
+	metricsOracle := orakel.NewMetricsOrakel()
 
 	// Record baseline for both baseline recordings
 	for _, baseline := range []string{"baseline", "baseline-2"} {
@@ -284,15 +284,18 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 
 		for containerName, logs := range baselineRecording.Logs {
 
-			drainMiner, exists := drainMinerPerContainer[containerName]
+			drainMiner, exists := logOraclePerContainer[containerName]
 			if !exists {
 				// Initialize a new DrainMiner
 				drainMiner = orakel.NewLogOrakel()
 			}
 
 			drainMiner.LoadBaseline(logs)
-			drainMinerPerContainer[containerName] = drainMiner
+			logOraclePerContainer[containerName] = drainMiner
 		}
+
+		// Metrics oracle is per pod/workload
+		metricsOracle.LoadBaseline(baselineRecording)
 	}
 
 	checkRuns := m.workloadHardeningCheck.Status.CheckRuns
@@ -323,7 +326,7 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			checkSuccessful = *checkRun.CheckSuccessfull // Use the existing value if it exists
 		}
 		for containerName, logs := range checkRecording.Logs {
-			drainMiner, exists := drainMinerPerContainer[containerName]
+			drainMiner, exists := logOraclePerContainer[containerName]
 			if !exists {
 				m.logger.Info("No baseline found for pod", "podName", containerName)
 				continue
@@ -333,17 +336,17 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			if len(anomalies) > 0 && len(anomalies) <= 5 {
 				m.logger.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
 				checkSuccessful = false
-				if checkRun.Anomalies == nil {
-					checkRun.Anomalies = make(map[string][]string)
+				if checkRun.LogAnomalies == nil {
+					checkRun.LogAnomalies = make(map[string][]string)
 				}
 
-				checkRun.Anomalies[containerName] = anomalies
+				checkRun.LogAnomalies[containerName] = anomalies
 
 			} else if len(anomalies) > 5 {
 				m.logger.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
 				checkSuccessful = false
-				if checkRun.Anomalies == nil {
-					checkRun.Anomalies = make(map[string][]string)
+				if checkRun.LogAnomalies == nil {
+					checkRun.LogAnomalies = make(map[string][]string)
 				}
 
 				anomalyMiner := orakel.NewLogOrakel()
@@ -354,9 +357,9 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 				if len(anomalyTemplates) > 5 {
 					m.logger.V(2).Info("Trimming anomaly templates to last 5", "checkRun", checkRun.Name, "containerName", containerName)
 					// First 5 anomalies are the most significant ones
-					checkRun.Anomalies[containerName] = anomalyTemplates[:5]
+					checkRun.LogAnomalies[containerName] = anomalyTemplates[:5]
 				} else {
-					checkRun.Anomalies[containerName] = anomalyTemplates
+					checkRun.LogAnomalies[containerName] = anomalyTemplates
 				}
 
 			} else {
@@ -367,6 +370,9 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 		// Update the check run with the analysis results
 		checkRun.CheckSuccessfull = ptr.To(checkSuccessful)
 		updatedCheckRuns[checkRun.Name] = checkRun
+
+		// Just add them to the check run, currently not further evaluated
+		checkRun.CpuDeviation, checkRun.MemoryDeviation = metricsOracle.AnalyzeTarget(checkRecording)
 	}
 
 	// Update the check run status
