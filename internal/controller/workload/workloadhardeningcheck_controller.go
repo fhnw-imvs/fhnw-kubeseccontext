@@ -23,6 +23,7 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -466,6 +467,17 @@ func (r *WorkloadHardeningCheckReconciler) deleteNamespace(ctx context.Context, 
 		log.Error(err, "Failed to delete Namespace")
 		return err
 	}
+
+	// Remove all ClusterRoleBindings that are associated with this namespace
+	clusterRoleBindingList := &rbacv1.ClusterRoleBindingList{}
+	r.List(ctx, clusterRoleBindingList, client.MatchingFields{"metadata.name": namespaceName})
+	for _, clusterRoleBinding := range clusterRoleBindingList.Items {
+		if clusterRoleBinding.Labels["orakel.fhnw.ch/target-namespace"] == namespaceName {
+			log.Info("Deleting ClusterRoleBinding", "name", clusterRoleBinding.Name)
+			err = r.Delete(ctx, &clusterRoleBinding)
+		}
+	}
+
 	return nil
 }
 
