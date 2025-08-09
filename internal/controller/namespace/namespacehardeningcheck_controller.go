@@ -508,7 +508,7 @@ func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx cont
 			usableResources = append(usableResources, resource)
 		default:
 			// Unsupported workload type, we can skip it
-			logger.Info("Skipping unsupported workload type", "kind", resource.GetKind(), "name", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
+			logger.V(3).Info("Skipping unsupported workload type", "kind", resource.GetKind(), "name", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
 		}
 	}
 

@@ -1,0 +1,410 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: podtato-kubectl
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podtato-head-frontend
+  namespace: podtato-kubectl
+spec:
+  selector:
+    matchLabels:
+      app: podtato-head-frontend
+  template:
+    metadata:
+      labels:
+        app: podtato-head-frontend
+        role: frontend
+    spec:
+      containers:
+      - name: podtato-head-frontend
+        image: ghcr.io/podtato-head/podtato-server:v0.3.3 #x-release-please-version
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+        env:
+          - name: PODTATO_COMPONENT
+            value: "frontend"
+          - name: SERVICES_CONFIG_FILE_PATH
+            value: /config/servicesConfig.yaml
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+        ports:
+          - name: http
+            containerPort: 8080
+            protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: http
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: http
+        volumeMounts:
+          - name: service-discovery-map
+            mountPath: /config
+      volumes:
+        - name: service-discovery-map
+          configMap:
+            name: podtato-head-discovery
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podtato-head-left-arm
+  namespace: podtato-kubectl
+spec:
+  selector:
+    matchLabels:
+      app: podtato-head-left-arm
+  template:
+    metadata:
+      labels:
+        app: podtato-head-left-arm
+        role: backend
+    spec:
+      containers:
+        - name: podtato-head-left-arm
+          image: ghcr.io/podtato-head/podtato-server:v0.3.3 #x-release-please-version
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          env:
+            - name: PODTATO_COMPONENT
+              value: "left-arm"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+              
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podtato-head-right-arm
+  namespace: podtato-kubectl
+spec:
+  selector:
+    matchLabels:
+      app: podtato-head-right-arm
+  template:
+    metadata:
+      labels:
+        app: podtato-head-right-arm
+        role: backend
+    spec:
+      containers:
+        - name: podtato-head-right-arm
+          image: ghcr.io/podtato-head/podtato-server:v0.3.3 #x-release-please-version
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          env:
+            - name: PODTATO_COMPONENT
+              value: "right-arm"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podtato-head-left-leg
+  namespace: podtato-kubectl
+spec:
+  selector:
+    matchLabels:
+      app: podtato-head-left-leg
+  template:
+    metadata:
+      labels:
+        app: podtato-head-left-leg
+        role: backend
+    spec:
+      containers:
+        - name: podtato-head-left-leg
+          image: ghcr.io/podtato-head/podtato-server:v0.3.3 #x-release-please-version
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          env:
+            - name: PODTATO_COMPONENT
+              value: "left-leg"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podtato-head-right-leg
+  namespace: podtato-kubectl
+spec:
+  selector:
+    matchLabels:
+      app: podtato-head-right-leg
+  template:
+    metadata:
+      labels:
+        app: podtato-head-right-leg
+        role: backend
+    spec:
+      containers:
+        - name: podtato-head-right-leg
+          image: ghcr.io/podtato-head/podtato-server:v0.3.3 #x-release-please-version
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          env:
+            - name: PODTATO_COMPONENT
+              value: "right-leg"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: podtato-head-hat
+  namespace: podtato-kubectl
+spec:
+  selector:
+    matchLabels:
+      app: podtato-head-hat
+  template:
+    metadata:
+      labels:
+        app: podtato-head-hat
+        role: backend
+    spec:
+      containers:
+        - name: podtato-head-hat
+          image: ghcr.io/podtato-head/podtato-server:v0.3.3 #x-release-please-version
+          resources:
+            requests:
+              memory: "32Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "500m"
+          env:
+            - name: PODTATO_COMPONENT
+              value: "hat"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podtato-head-frontend
+  namespace: podtato-kubectl
+spec:
+  selector:
+    app: podtato-head-frontend
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+  type: ClusterIP
+  
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podtato-head-left-leg
+  namespace: podtato-kubectl
+spec:
+  selector:
+    app: podtato-head-left-leg
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podtato-head-right-leg
+  namespace: podtato-kubectl
+spec:
+  selector:
+    app: podtato-head-right-leg
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podtato-head-left-arm
+  namespace: podtato-kubectl
+spec:
+  selector:
+    app: podtato-head-left-arm
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podtato-head-right-arm
+  namespace: podtato-kubectl
+spec:
+  selector:
+    app: podtato-head-right-arm
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: podtato-head-hat
+  namespace: podtato-kubectl
+spec:
+    selector:
+      app: podtato-head-hat
+    ports:
+      - name: http
+        port: 8080
+        protocol: TCP
+    type: ClusterIP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-ingress-only-from-frontend
+  namespace: podtato-kubectl
+spec:
+  podSelector:
+    matchLabels:
+      role: backend
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              role: frontend
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: podtato-head-discovery
+  namespace: podtato-kubectl
+data:
+  servicesConfig.yaml: |
+    hat:       "http://podtato-head-hat:8080"
+    left-leg:  "http://podtato-head-left-leg:8080"
+    left-arm:  "http://podtato-head-left-arm:8080"
+    right-leg: "http://podtato-head-right-leg:8080"
+    right-arm: "http://podtato-head-right-arm:8080"

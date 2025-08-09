@@ -1,0 +1,10 @@
+apiVersion: checks.funk.fhnw.ch/v1alpha1
+kind: NamespaceHardeningCheck
+metadata:
+  labels:
+    app.kubernetes.io/name: orakel-of-funk
+  name: podtato-namespace-hardening
+spec:
+  targetNamespace: podtato-kubectl
+  recordingDuration: 1m
+  suffix: abdc
