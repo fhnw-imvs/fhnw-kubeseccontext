@@ -183,7 +183,7 @@ func (r *WorkloadCheckRunner) deleteCheckNamespace(ctx context.Context) error {
 
 	// Remove all ClusterRoleBindings that are associated with this namespace
 	clusterRoleBindingList := &rbacv1.ClusterRoleBindingList{}
-	r.List(ctx, clusterRoleBindingList, client.MatchingFields{"metadata.name": namespaceName})
+	r.List(ctx, clusterRoleBindingList)
 	for _, clusterRoleBinding := range clusterRoleBindingList.Items {
 		if clusterRoleBinding.Labels["orakel.fhnw.ch/target-namespace"] == namespaceName {
 			log.Info("Deleting ClusterRoleBinding", "name", clusterRoleBinding.Name)
@@ -795,37 +795,18 @@ func (r *WorkloadCheckRunner) recordLogs(ctx context.Context, previous bool) (ma
 
 	// get pods under observation, we use the label selector from the workload under test
 	// Shouldn't be necessary anymore, as this was mostly relevant to record metrics. We are only recording logs after the metrics have been recorded, so the pods should already be running.
-	// ToDo: Cleanup, only fetch the pods and then fetch their logs
 	pods := &corev1.PodList{}
-	for len(pods.Items) == 0 {
-		err = r.List(
-			ctx,
-			pods,
-			&client.ListOptions{
-				Namespace:     targetNamespace,
-				LabelSelector: labelSelector,
-			},
-		)
-		if err != nil {
-			r.logger.Error(err, "error fetching pods")
-			return nil, err
-		}
-
-		// If the pods aren't assigned to a node, we cannot record metrics
-		if len(pods.Items) > 0 {
-			allAssigned := true
-			for _, pod := range pods.Items {
-				if pod.Spec.NodeName == "" {
-					allAssigned = false
-					break
-				}
-			}
-			if allAssigned {
-				break // All pods are assigned to a node, we can proceed
-			}
-			pods = &corev1.PodList{} // reset podList to retry fetching
-			r.logger.Info("Pods are not assigned to a node yet, retrying")
-		}
+	err = r.List(
+		ctx,
+		pods,
+		&client.ListOptions{
+			Namespace:     targetNamespace,
+			LabelSelector: labelSelector,
+		},
+	)
+	if err != nil {
+		r.logger.Error(err, "error fetching pods")
+		return nil, err
 	}
 
 	r.logger.Info(

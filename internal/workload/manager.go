@@ -222,8 +222,8 @@ func (m *WorkloadCheckManager) GetWorkloadUnderTest(ctx context.Context, namespa
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			// If the custom resource is not found then it usually means that it was deleted or not created
-			m.logger.Info("workloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
-			return nil, fmt.Errorf("workloadHardeningCheck.Spec.TargetRef not found. You must reference an existing workload to test it")
+			m.logger.Info("TargetRef not found. You must reference an existing workload to test it", "name", name, "namespace", namespace, "kind", kind)
+			return nil, fmt.Errorf("TargetRef not found. You must reference an existing workload to test it")
 		}
 		// Error reading the object - requeue the request.
 		m.logger.Error(err, "failed to get workloadHardeningCheck.Spec.TargetRef, requeing")

@@ -117,7 +117,7 @@ test: manifests generate fmt vet envtest ## Run tests.
 .PHONY: proxy-valkey
 proxy-valkey: ## Proxy the valkey server to localhost, to start the controller locally
 	@echo "Forwarding valkey server to localhost"
-	kubectl -n orakel-of-funk-system port-forward svc/valkey 6379:6379
+	kubectl -n orakel-of-funk-system port-forward svc/valkey 6379:6379 &
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
@@ -139,7 +139,7 @@ build: manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
 .PHONY: run
-run: manifests generate fmt vet ## Run a controller from your host.
+run: manifests generate fmt vet proxy-valkey ## Run a controller from your host.
 	ENABLE_WEBHOOKS=false go run ./cmd/main.go --valkey-host=localhost
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.

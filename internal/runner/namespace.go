@@ -21,7 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-// ToDo: Decide if it's better to use an deny- or allow- list to clone the namespace
 var resourcesToSkip = []string{
 	"bindings",
 	"localsubjectaccessreviews",
@@ -100,14 +99,17 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 				clonedClusterRoleBinding.SetUID("")
 				clonedClusterRoleBinding.SetGeneration(0)
 
-				roleBindingName := strings.TrimSuffix(clusterRoleBinding.Name, "-"+sourceNamespace)
+				roleBindingName := clusterRoleBinding.Name + "-" + targetNamespace
 				// If the composite name is too long, we need to shorten it, and to avoid conflicts, we add a random suffix
 				if len(roleBindingName) > 250 {
 					suffixLength := 10
 					if len(clusterRoleBinding.Name) > 245 {
 						suffixLength = 253 - len(clusterRoleBinding.Name)
 					}
-					roleBindingName = fmt.Sprintf("%s-%s", clusterRoleBinding.Name, utilrand.String(suffixLength))
+					roleBindingName = clusterRoleBinding.Name + "-" + utilrand.String(suffixLength)
+					if len(roleBindingName) > 253 {
+						roleBindingName = roleBindingName[:253]
+					}
 				}
 				clonedClusterRoleBinding.SetName(roleBindingName)
 
@@ -157,7 +159,6 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 		// override namespace!
 		clonedResource.SetNamespace(targetNamespace)
 
-		// ToDo: Clone PVC using the original PV as datasource
 		if clonedResource.GetKind() == "PersistentVolumeClaim" {
 			// remove all annotations, as the storage controller adds its own which will conflict
 			clonedResource.SetAnnotations(map[string]string{})
@@ -165,7 +166,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 			clonedResource.Object["spec"].(map[string]any)["volumeName"] = ""
 		}
 
-		// Remove all ips from services, otherwise they will conflict with the original namespace
+		// Remove all IPs from services, otherwise they will conflict with the original namespace
 		if clonedResource.GetKind() == "Service" {
 			var svc *corev1.Service
 			// Convert to service object

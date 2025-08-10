@@ -40,6 +40,7 @@ var workloadhardeningchecklog = logf.Log.WithName("workloadhardeningcheck-resour
 func SetupWorkloadHardeningCheckWebhookWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewWebhookManagedBy(mgr).For(&checksv1alpha1.WorkloadHardeningCheck{}).
 		WithDefaulter(&WorkloadHardeningCheckCustomDefaulter{}).
+		WithValidator(&WorkloadHardeningCheckCustomValidator{}).
 		Complete()
 }
 

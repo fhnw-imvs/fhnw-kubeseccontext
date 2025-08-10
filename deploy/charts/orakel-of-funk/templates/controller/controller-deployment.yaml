@@ -48,6 +48,9 @@ spec:
         image: "{{ .Values.orakel.image.registry }}/{{ .Values.orakel.image.repository }}:{{ .Values.orakel.image.tag | default .Chart.AppVersion }}"
         imagePullPolicy: {{ .Values.orakel.image.pullPolicy }}
         name: orkael-of-funk-controller-manager
+        env:
+          - name: ENABLE_WEBHOOKS
+            value: "true"
         ports:
         - containerPort: 9443
           name: webhook-server
