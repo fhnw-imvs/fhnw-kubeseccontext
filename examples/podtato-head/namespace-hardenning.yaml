@@ -7,4 +7,3 @@ metadata:
 spec:
   targetNamespace: podtato-kubectl
   recordingDuration: 1m
-  suffix: abdc

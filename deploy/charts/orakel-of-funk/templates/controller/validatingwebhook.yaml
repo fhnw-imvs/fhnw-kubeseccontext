@@ -1,6 +1,6 @@
 ---
 apiVersion: admissionregistration.k8s.io/v1
-kind: MutatingWebhookConfiguration
+kind: ValidatingWebhookConfiguration
 metadata:
   labels:
     {{- include "orakel-of-funk.labels" . | nindent 4 }}
@@ -12,7 +12,7 @@ metadata:
       {{- toYaml . | nindent 4 }}
     {{- end }}
     cert-manager.io/inject-ca-from: "{{ include "orakel-of-funk.namespace" . }}/orakel-of-funk-serving-cert"
-  name: orakel-of-funk-mutating-webhook-configuration
+  name: orakel-of-funk-validating-webhook-configuration
 webhooks:
 - admissionReviewVersions:
   - v1
@@ -20,9 +20,9 @@ webhooks:
     service:
       name: webhook-{{ include "orakel-of-funk.fullname" . }}
       namespace: {{ include "orakel-of-funk.namespace" . }}
-      path: /mutate-checks-funk-fhnw-ch-v1alpha1-namespacehardeningcheck
+      path: /validate-checks-funk-fhnw-ch-v1alpha1-namespacehardeningcheck
   failurePolicy: Fail
-  name: mnamespacehardeningcheck-v1alpha1.kb.io
+  name: vnamespacehardeningcheck-v1alpha1.kb.io
   rules:
   - apiGroups:
     - checks.funk.fhnw.ch
@@ -40,9 +40,9 @@ webhooks:
     service:
       name: webhook-{{ include "orakel-of-funk.fullname" . }}
       namespace: {{ include "orakel-of-funk.namespace" . }}
-      path: /mutate-checks-funk-fhnw-ch-v1alpha1-workloadhardeningcheck
+      path: /validate-checks-funk-fhnw-ch-v1alpha1-workloadhardeningcheck
   failurePolicy: Fail
-  name: mworkloadhardeningcheck-v1alpha1.kb.io
+  name: vworkloadhardeningcheck-v1alpha1.kb.io
   rules:
   - apiGroups:
     - checks.funk.fhnw.ch

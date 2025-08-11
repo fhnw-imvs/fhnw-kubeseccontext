@@ -10,6 +10,26 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
+      path: /mutate-checks-funk-fhnw-ch-v1alpha1-namespacehardeningcheck
+  failurePolicy: Fail
+  name: mnamespacehardeningcheck-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - checks.funk.fhnw.ch
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - namespacehardeningchecks
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
       path: /mutate-checks-funk-fhnw-ch-v1alpha1-workloadhardeningcheck
   failurePolicy: Fail
   name: mworkloadhardeningcheck-v1alpha1.kb.io
@@ -49,4 +69,24 @@ webhooks:
     - UPDATE
     resources:
     - namespacehardeningchecks
+  sideEffects: None
+- admissionReviewVersions:
+  - v1
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: system
+      path: /validate-checks-funk-fhnw-ch-v1alpha1-workloadhardeningcheck
+  failurePolicy: Fail
+  name: vworkloadhardeningcheck-v1alpha1.kb.io
+  rules:
+  - apiGroups:
+    - checks.funk.fhnw.ch
+    apiVersions:
+    - v1alpha1
+    operations:
+    - CREATE
+    - UPDATE
+    resources:
+    - workloadhardeningchecks
   sideEffects: None

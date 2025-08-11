@@ -1,3 +1,4 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
@@ -17,6 +18,12 @@ spec:
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
+    - jsonPath: .status.conditions[?(@.type=="Finished")].status
+      name: Finished
+      type: string
+    - jsonPath: .spec.suffix
+      name: Suffix
+      type: string
     - jsonPath: .status.conditions[?(@.type=="Finished")].message
       name: Status
       type: string
@@ -46,9 +53,9 @@ spec:
           spec:
             description: WorkloadHardeningCheckSpec defines the desired state of WorkloadHardeningCheck
             properties:
-              baselineDuration:
+              recordingDuration:
                 default: 5m
-                description: BaselineDuration specifies how long to observe the baseline
+                description: RecordingDuration specifies how long to observe the baseline
                   workload before applying hardening tests.
                 pattern: ^\d+[smh]$
                 type: string
@@ -188,10 +195,14 @@ spec:
                         successful or not. A check is considered successful if the
                         workload started and metrics and logs were recorded.
                       type: boolean
+                    cpuDeviation:
+                      type: boolean
                     failureReason:
                       description: FailureReason provides a reason for the failure
                         of the check run, if applicable.
                       type: string
+                    memoryDeviation:
+                      type: boolean
                     name:
                       description: Name of the check run, e.g., "Baseline", "User",
                         "ReadOnlyRootFilesystem", etc.
@@ -300,10 +311,14 @@ spec:
                         successful or not. A check is considered successful if the
                         workload started and metrics and logs were recorded.
                       type: boolean
+                    cpuDeviation:
+                      type: boolean
                     failureReason:
                       description: FailureReason provides a reason for the failure
                         of the check run, if applicable.
                       type: string
+                    memoryDeviation:
+                      type: boolean
                     name:
                       description: Name of the check run, e.g., "Baseline", "User",
                         "ReadOnlyRootFilesystem", etc.
@@ -472,10 +487,14 @@ spec:
                       successful or not. A check is considered successful if the workload
                       started and metrics and logs were recorded.
                     type: boolean
+                  cpuDeviation:
+                    type: boolean
                   failureReason:
                     description: FailureReason provides a reason for the failure of
                       the check run, if applicable.
                     type: string
+                  memoryDeviation:
+                    type: boolean
                   name:
                     description: Name of the check run, e.g., "Baseline", "User",
                       "ReadOnlyRootFilesystem", etc.

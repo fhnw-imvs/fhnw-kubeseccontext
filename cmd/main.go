@@ -177,9 +177,6 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "WorkloadHardeningCheck")
 		os.Exit(1)
 	}
-
-	setupLog.Info("manager successfully configured")
-
 	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
 		if err = webhookchecksv1alpha1.SetupWorkloadHardeningCheckWebhookWithManager(mgr); err != nil {
@@ -187,6 +184,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	setupLog.Info("workload-hardening-controller successfully configured")
+
 	if err := (&namespace.NamespaceHardeningCheckReconciler{
 		Client:   mgr.GetClient(),
 		Scheme:   mgr.GetScheme(),
@@ -202,6 +201,8 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	setupLog.Info("namespace-hardening-controller successfully configured")
+
 	// +kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
