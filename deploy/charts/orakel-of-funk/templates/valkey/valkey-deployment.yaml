@@ -22,6 +22,9 @@ spec:
     metadata:
       labels:
         app: valkey
+        {{- with .Values.globalLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
     spec:
       {{- with .imagePullSecrets }}
       imagePullSecrets:

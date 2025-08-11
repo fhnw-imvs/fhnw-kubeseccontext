@@ -21,3 +21,5 @@ spec:
     kind: Issuer
     name: orakel-of-funk-selfsigned-issuer
   secretName: webhook-server-cert
+  privateKey:
+    rotationPolicy: Always
