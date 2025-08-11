@@ -30,7 +30,7 @@ func TestAllowPrivilegeEscalationCheck(t *testing.T) {
 
 		defaults := check.GetSecurityContextDefaults(baseSecurityContext)
 
-		assert.False(t, *defaults.Container.AllowPrivilegeEscalation, "Expected AllowPrivilegeEscalation to be set")
+		assert.False(t, *defaults.Container.AllowPrivilegeEscalation, "Expected `Container.AllowPrivilegeEscalation` to be set to `false` by default")
 	})
 
 	t.Run("ShouldRunSingleContainer", func(t *testing.T) {
@@ -45,7 +45,7 @@ func TestAllowPrivilegeEscalationCheck(t *testing.T) {
 			},
 		}
 
-		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true for AllowPrivilegeEscalation set to true")
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true if `AllowPrivilegeEscalation` is set to true")
 	})
 
 	t.Run("ShouldRunMultipleContainers", func(t *testing.T) {
@@ -65,7 +65,7 @@ func TestAllowPrivilegeEscalationCheck(t *testing.T) {
 			},
 		}
 
-		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true when at least one container has AllowPrivilegeEscalation set to true")
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true when at least one container has `AllowPrivilegeEscalation` set to `true`")
 	})
 
 	t.Run("ShouldRunNotRunSingleContainer", func(t *testing.T) {
@@ -80,7 +80,7 @@ func TestAllowPrivilegeEscalationCheck(t *testing.T) {
 			},
 		}
 
-		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false for AllowPrivilegeEscalation set to false")
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false if `AllowPrivilegeEscalation` is set to `false`")
 	})
 
 	t.Run("ShouldRunNotRunMultipleContainers", func(t *testing.T) {
@@ -100,6 +100,6 @@ func TestAllowPrivilegeEscalationCheck(t *testing.T) {
 			},
 		}
 
-		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false for AllowPrivilegeEscalation set to false")
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false if `AllowPrivilegeEscalation` is set to `false`")
 	})
 }

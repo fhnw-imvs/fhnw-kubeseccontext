@@ -29,7 +29,7 @@ func TestDropAllCapabilitiesCheck(t *testing.T) {
 
 		defaults := check.GetSecurityContextDefaults(baseSecurityContext)
 
-		assert.Equal(t, []corev1.Capability{"ALL"}, defaults.Container.CapabilitiesDrop, "Expected CapabilitiesDrop to be set to ALL by default")
+		assert.Equal(t, []corev1.Capability{"ALL"}, defaults.Container.CapabilitiesDrop, "Expected `CapabilitiesDrop` to be set to `ALL` by default")
 	})
 
 	t.Run("ShouldRunSingleContainer", func(t *testing.T) {
@@ -42,7 +42,7 @@ func TestDropAllCapabilitiesCheck(t *testing.T) {
 			},
 		}
 
-		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true for AllowPrivilegeEscalation set to true")
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true if `Capabilites` are empty")
 	})
 
 	t.Run("ShouldRunMultipleContainers", func(t *testing.T) {
@@ -62,7 +62,7 @@ func TestDropAllCapabilitiesCheck(t *testing.T) {
 			},
 		}
 
-		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true when at least one container has AllowPrivilegeEscalation set to true")
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true when at least one container has `Capabilities.Drop` not set to `ALL`")
 	})
 
 	t.Run("ShouldRunNotRunSingleContainer", func(t *testing.T) {
@@ -79,7 +79,7 @@ func TestDropAllCapabilitiesCheck(t *testing.T) {
 			},
 		}
 
-		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false for AllowPrivilegeEscalation set to false")
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false if `Capabilities.Drop` is set to `ALL`")
 	})
 
 	t.Run("ShouldRunNotRunMultipleContainers", func(t *testing.T) {
@@ -103,6 +103,6 @@ func TestDropAllCapabilitiesCheck(t *testing.T) {
 			},
 		}
 
-		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false for AllowPrivilegeEscalation set to false")
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false if all containers have `Capabilities.Drop` set to `ALL`")
 	})
 }

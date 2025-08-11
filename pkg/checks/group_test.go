@@ -30,10 +30,30 @@ func TestGroupCheck(t *testing.T) {
 
 		defaults := check.GetSecurityContextDefaults(baseSecurityContext)
 
-		assert.Equal(t, int64(1000), *defaults.Container.RunAsGroup, "Expected RunAsUser to be set to 1000 by default")
-		assert.Equal(t, int64(1000), *defaults.Pod.RunAsGroup, "Expected RunAsUser to be set to 1000 by default")
+		assert.Equal(t, int64(1000), *defaults.Container.RunAsGroup, "Expected Container.RunAsGroup to be set to 1000 by default")
+		assert.Equal(t, int64(1000), *defaults.Pod.RunAsGroup, "Expected Pod.RunAsGroup to be set to 1000 by default")
+		assert.Equal(t, int64(1000), *defaults.Pod.RunAsUser, "Expected Pod.RunAsUser to be set to 1000 by default")
 
-		assert.Equal(t, int64(1000), *defaults.Pod.FSGroup, "Expected RunAsUser to be set to 1000 by default")
+		assert.Equal(t, int64(1000), *defaults.Pod.FSGroup, "Expected Pod.FSGroup to be set to 1000 by default")
+	})
+
+	t.Run("GetSecurityContextDefaultsWithPresets", func(t *testing.T) {
+		check := &checks.GroupCheck{}
+
+		baseSecurityContext := &checksv1alpha1.SecurityContextDefaults{
+			Pod: &checksv1alpha1.PodSecurityContextDefaults{
+				RunAsUser: ptr.To(int64(2000)),
+			},
+			Container: &checksv1alpha1.ContainerSecurityContextDefaults{},
+		}
+
+		defaults := check.GetSecurityContextDefaults(baseSecurityContext)
+
+		assert.Equal(t, int64(2000), *defaults.Container.RunAsGroup, "Expected Container.RunAsGroup to match preset RunAsUser")
+		assert.Equal(t, int64(2000), *defaults.Pod.RunAsGroup, "Expected Pod.RunAsGroup to match preset RunAsUser")
+		assert.Equal(t, int64(2000), *defaults.Pod.RunAsUser, "Expected Pod.RunAsUser to match preset RunAsUser")
+
+		assert.Equal(t, int64(2000), *defaults.Pod.FSGroup, "Expected Pod.RunAsUser to match preset RunAsUser")
 	})
 
 	t.Run("ShouldRunSingleContainer", func(t *testing.T) {

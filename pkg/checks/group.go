@@ -26,10 +26,10 @@ func (c *GroupCheck) GetSecurityContextDefaults(baseSecurityContext *checksv1alp
 	}
 
 	if baseSecurityContext.Container.RunAsUser == nil {
-		baseSecurityContext.Container.RunAsUser = ptr.To(int64(1000)) // Default user ID
+		baseSecurityContext.Container.RunAsUser = baseSecurityContext.Pod.RunAsUser
 	}
 	if baseSecurityContext.Container.RunAsGroup == nil {
-		baseSecurityContext.Container.RunAsGroup = baseSecurityContext.Container.RunAsUser
+		baseSecurityContext.Container.RunAsGroup = baseSecurityContext.Pod.RunAsGroup
 	}
 
 	return baseSecurityContext

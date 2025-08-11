@@ -30,7 +30,7 @@ func TestReadOnlyRootFileSystemCheck(t *testing.T) {
 
 		defaults := check.GetSecurityContextDefaults(baseSecurityContext)
 
-		assert.True(t, *defaults.Container.ReadOnlyRootFilesystem, "Expected ReadOnlyRootFilesystem to be set to true by default")
+		assert.True(t, *defaults.Container.ReadOnlyRootFilesystem, "Expected `ReadOnlyRootFilesystem` to be set to true by `default`")
 	})
 
 	t.Run("ShouldRunSingleContainer", func(t *testing.T) {
@@ -45,7 +45,7 @@ func TestReadOnlyRootFileSystemCheck(t *testing.T) {
 			},
 		}
 
-		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true for ReadOnlyRootFilesystemCheck set to false")
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true if `ReadOnlyRootFilesystemCheck` is set to `false`")
 	})
 
 	t.Run("ShouldRunMultipleContainers", func(t *testing.T) {
@@ -65,7 +65,7 @@ func TestReadOnlyRootFileSystemCheck(t *testing.T) {
 			},
 		}
 
-		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true when at least one container has ReadOnlyRootFilesystemCheck set to false")
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true when at least one container has `ReadOnlyRootFilesystemCheck` set to `false`")
 	})
 
 	t.Run("ShouldRunNotRunSingleContainer", func(t *testing.T) {
@@ -80,7 +80,7 @@ func TestReadOnlyRootFileSystemCheck(t *testing.T) {
 			},
 		}
 
-		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false for ReadOnlyRootFilesystemCheck set to true")
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false if `ReadOnlyRootFilesystemCheck` is set to `true`")
 	})
 
 	t.Run("ShouldRunNotRunMultipleContainers", func(t *testing.T) {
@@ -100,6 +100,6 @@ func TestReadOnlyRootFileSystemCheck(t *testing.T) {
 			},
 		}
 
-		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false for ReadOnlyRootFilesystemCheck set to true")
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false if `ReadOnlyRootFilesystemCheck` is set to `true` for all containers")
 	})
 }

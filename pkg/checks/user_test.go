@@ -30,11 +30,11 @@ func TestUserCheck(t *testing.T) {
 
 		defaults := check.GetSecurityContextDefaults(baseSecurityContext)
 
-		assert.Equal(t, int64(1000), *defaults.Container.RunAsUser, "Expected RunAsUser to be set to 1000 by default")
-		assert.Equal(t, int64(1000), *defaults.Pod.RunAsUser, "Expected RunAsUser to be set to 1000 by default")
+		assert.Equal(t, int64(1000), *defaults.Container.RunAsUser, "Expected `Container.RunAsUser` to be set to `1000` by default")
+		assert.Equal(t, int64(1000), *defaults.Pod.RunAsUser, "Expected `Pod.RunAsUser` to be set to `1000` by default")
 
-		assert.True(t, *defaults.Container.RunAsNonRoot, "Expected RunAsNonRoot to be set to true by default")
-		assert.True(t, *defaults.Pod.RunAsNonRoot, "Expected RunAsNonRoot to be set to true by default")
+		assert.True(t, *defaults.Container.RunAsNonRoot, "Expected `Container.RunAsNonRoot` to be set to `true` by default")
+		assert.True(t, *defaults.Pod.RunAsNonRoot, "Expected `Pod.RunAsNonRoot` to be set to `true` by default")
 	})
 
 	t.Run("ShouldRunSingleContainer", func(t *testing.T) {
@@ -46,7 +46,7 @@ func TestUserCheck(t *testing.T) {
 			},
 		}
 
-		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true if runAsUser or runAsNonRoot are not set")
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true if `runAsUser` or `runAsNonRoot` are not set")
 	})
 
 	t.Run("ShouldRunNotRunSingleContainer", func(t *testing.T) {
@@ -58,7 +58,7 @@ func TestUserCheck(t *testing.T) {
 			},
 		}
 
-		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false if runAsUser and runAsNonRoot are set")
+		assert.False(t, check.ShouldRun(podSpec), "Expected ShouldRun to return false if `runAsUser` and `runAsNonRoot` are set")
 	})
 
 }
