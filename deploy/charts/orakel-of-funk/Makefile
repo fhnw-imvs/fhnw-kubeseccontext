@@ -5,3 +5,6 @@ help: ## Display this help.
 .PHONY: docs
 docs: ## Generate documentation for the Helm chart
 	helm-docs --template-files=docs/README.md.gotmpl --chart-search-root . --output-file README.md
+
+lint: ## Lint the Helm chart
+	helm lint .

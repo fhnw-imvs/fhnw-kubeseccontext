@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
-	"github.com/valkey-io/valkey-go"
+	valkey "github.com/valkey-io/valkey-go"
 )
 
 type ValkeyClient struct {
@@ -32,7 +32,7 @@ func NewValKeyClient(valkeyHost, valkeyPort string) (*ValkeyClient, error) {
 func (v *ValkeyClient) storeEntry(ctx context.Context, key string, value string) error {
 
 	// Store the entry with a key and value, setting an expiration time of 1 day (24 hours)
-	err := v.Do(ctx, v.B().Set().Key(strings.ToLower(key)).Value(value).Ex(24*time.Hour).Build()).Error()
+	err := v.Client.Do(ctx, v.Client.B().Set().Key(strings.ToLower(key)).Value(value).Ex(24*time.Hour).Build()).Error()
 	if err != nil {
 		return err
 	}
@@ -42,7 +42,7 @@ func (v *ValkeyClient) storeEntry(ctx context.Context, key string, value string)
 
 func (v *ValkeyClient) getEntry(ctx context.Context, key string) (string, error) {
 
-	res, err := v.Do(ctx, v.B().Get().Key(strings.ToLower(key)).Build()).AsBytes()
+	res, err := v.Client.Do(ctx, v.Client.B().Get().Key(strings.ToLower(key)).Build()).AsBytes()
 	if err != nil {
 		return "", err
 	}
@@ -55,7 +55,7 @@ func (v *ValkeyClient) getEntry(ctx context.Context, key string) (string, error)
 
 func (v ValkeyClient) deleteEntry(ctx context.Context, key string) error {
 
-	err := v.Do(ctx, v.B().Del().Key(strings.ToLower(key)).Build()).Error()
+	err := v.Client.Do(ctx, v.Client.B().Del().Key(strings.ToLower(key)).Build()).Error()
 	if err != nil {
 		return err
 	}

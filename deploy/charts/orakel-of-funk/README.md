@@ -4,7 +4,13 @@
 
 Keep your Kubernetes workloads in tune — secure and functional.
 
-The chart installs the Orakel of Funk operator, and a ValKey instance which is uesd by the operator to store its state.
+The chart installs the Orakel of Funk operator, along a ValKey instance which is uesd by the operator to store its state.
+
+## Maintainers
+
+| Name | Email | Url |
+| ---- | ------ | --- |
+| Mathias Petermann | <mathias.petermann@students.fhnw.ch> | <https://github.com/peschmae> |
 
 ## Values
 

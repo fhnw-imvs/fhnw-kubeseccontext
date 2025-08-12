@@ -27,6 +27,9 @@ var resourcesToSkip = []string{
 	"endpointslices",
 	"endpoints",
 	"events",
+	"ingresses",
+	"httproutes",
+	"gateways",
 	"podmetrics",
 	"controllerrevisions",
 	// exclude our own resource to avoid infinite loops
