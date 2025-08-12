@@ -52,7 +52,9 @@ func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyCli
 	log := logf.FromContext(ctx).WithName("WorkloadManager")
 	scheme := runtime.NewScheme()
 
+	//nolint:errcheck
 	clientgoscheme.AddToScheme(scheme)
+	//nolint:errcheck
 	checksv1alpha1.AddToScheme(scheme)
 
 	cfg, err := ctrl.GetConfig()
@@ -79,12 +81,10 @@ func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyCli
 
 }
 
-func (m *WorkloadCheckManager) refreshWorkloadHardeningCheck() error {
+func (m *WorkloadCheckManager) refreshWorkloadHardeningCheck() {
 	if err := m.Get(context.Background(), types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
 		m.logger.Error(err, "Failed to re-fetch WorkloadHardeningCheck")
-		return fmt.Errorf("failed to re-fetch WorkloadHardeningCheck: %w", err)
 	}
-	return nil
 }
 
 func (m *WorkloadCheckManager) GetReplicaCount(ctx context.Context, namespace string) (int32, error) {

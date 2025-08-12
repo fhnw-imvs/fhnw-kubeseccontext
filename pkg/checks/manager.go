@@ -1,8 +1,6 @@
 package checks
 
 import (
-	"fmt"
-
 	v1 "k8s.io/api/core/v1"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
@@ -19,12 +17,8 @@ type CheckInterface interface {
 
 var checks = map[string]CheckInterface{}
 
-func RegisterCheck(check CheckInterface) error {
-	if _, exists := checks[check.GetType()]; exists {
-		return fmt.Errorf("check of type %s already registered", check.GetType())
-	}
+func RegisterCheck(check CheckInterface) {
 	checks[check.GetType()] = check
-	return nil
 }
 
 func GetAllChecks() map[string]CheckInterface {

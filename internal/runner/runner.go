@@ -10,10 +10,10 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -28,7 +28,6 @@ import (
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/namespace"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner/recorder"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 	wh "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/orakel"
@@ -133,9 +132,7 @@ func (r *WorkloadCheckRunner) namespaceExists(ctx context.Context, namespaceName
 func (r *WorkloadCheckRunner) createCheckNamespace(ctx context.Context) error {
 	targetNamespace := r.generateTargetNamespaceName()
 
-	namespaceCloner := namespace.NewNamespaceCloner(r.Client)
-
-	err := namespaceCloner.Clone(ctx, r.workloadHardeningCheck.Namespace, targetNamespace, r.workloadHardeningCheck.Spec.Suffix)
+	err := namespace.Clone(ctx, r.Client, r.workloadHardeningCheck.Namespace, targetNamespace, r.workloadHardeningCheck.Spec.Suffix)
 
 	if err != nil {
 		r.logger.Error(err, fmt.Sprintf("failed to clone namespace %s", r.workloadHardeningCheck.Namespace))
@@ -159,44 +156,6 @@ func (r *WorkloadCheckRunner) createCheckNamespace(ctx context.Context) error {
 
 	return nil
 
-}
-
-func (r *WorkloadCheckRunner) deleteCheckNamespace(ctx context.Context) error {
-	namespaceName := r.generateTargetNamespaceName()
-
-	log := r.logger.WithValues("namespace", namespaceName)
-
-	targetNs := &corev1.Namespace{}
-	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			log.Info("Namespace already deleted")
-			return nil
-		}
-		log.Error(err, "Failed to get Namespace for deletion")
-		return err
-	}
-	log.Info("Deleting Namespace")
-	err = r.Delete(ctx, targetNs)
-	if err != nil {
-		log.Error(err, "Failed to delete Namespace")
-		return err
-	}
-
-	// Remove all ClusterRoleBindings that are associated with this namespace
-	clusterRoleBindingList := &rbacv1.ClusterRoleBindingList{}
-	r.List(ctx, clusterRoleBindingList)
-	for _, clusterRoleBinding := range clusterRoleBindingList.Items {
-		if clusterRoleBinding.Labels["orakel.fhnw.ch/target-namespace"] == namespaceName {
-			log.Info("Deleting ClusterRoleBinding", "name", clusterRoleBinding.Name)
-			err = r.Delete(ctx, &clusterRoleBinding)
-			if err != nil {
-				log.Error(err, "Failed to delete ClusterRoleBinding", "name", clusterRoleBinding.Name)
-			}
-		}
-	}
-
-	return nil
 }
 
 func (r *WorkloadCheckRunner) setStatusRunning(ctx context.Context, message string) {
@@ -393,7 +352,7 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 				"Target namespace already exists, and check is in unknown state indicating a previous run was not finished",
 			)
 
-			r.deleteCheckNamespace(ctx)
+			namespace.Delete(ctx, r.Client, targetNamespaceName)
 		}
 
 	}
@@ -462,8 +421,10 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 
 	startTime := metav1.Now()
 
+	labelSelector, _ := r.checkManager.GetLabelSelector(ctx)
+
 	// start recording metrics for target workload
-	recordedMetrics, err := r.recordMetrics(ctx, targetNamespaceName)
+	recordedMetrics, err := r.recordMetrics(ctx, targetNamespaceName, labelSelector)
 
 	if err != nil {
 		r.logger.Error(err, "failed to record metrics")
@@ -472,7 +433,7 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 	}
 
 	// Record logs for the workload, since recordMetrics only returns after the duration is reached, we can asusme that we get the full logs here
-	logs, err := r.recordLogs(ctx, targetNamespaceName, false) // false means we want the current logs, not the previous ones
+	logs, err := r.recordLogs(ctx, targetNamespaceName, false, labelSelector) // false means we want the current logs, not the previous ones
 	if err != nil {
 		r.logger.Error(err, "failed to record logs")
 		r.setStatusFailed(ctx, "Failed to record logs")
@@ -528,7 +489,7 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 	}
 
 	// Cleanup: delete the check namespace after recording
-	err = r.deleteCheckNamespace(ctx)
+	err = namespace.Delete(ctx, r.Client, targetNamespaceName)
 	if err != nil {
 		r.logger.Error(err, "failed to delete target namespace after recording")
 	} else {
@@ -567,7 +528,9 @@ func (r *WorkloadCheckRunner) waitForUpdatedPods(ctx context.Context, workloadUn
 				),
 			)
 
-			logs, err := r.recordLogs(ctx, targetNamespace, true)
+			labelSelector, _ := r.checkManager.GetLabelSelector(ctx)
+
+			logs, err := r.recordLogs(ctx, targetNamespace, true, labelSelector)
 			if err != nil {
 				r.logger.Error(err, "failed to record logs")
 				return false, err
@@ -589,7 +552,7 @@ func (r *WorkloadCheckRunner) waitForUpdatedPods(ctx context.Context, workloadUn
 				r.logger.Error(err, "failed to store workload recording in Valkey")
 			}
 
-			err = r.deleteCheckNamespace(ctx)
+			err = namespace.Delete(ctx, r.Client, targetNamespace)
 			if err != nil {
 				r.logger.Error(err, "failed to delete target namespace with failed workload")
 			}
@@ -673,16 +636,11 @@ func (r *WorkloadCheckRunner) applySecurityContext(ctx context.Context, workload
 	return nil
 }
 
-func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context, targetNamespace string) ([]recording.ResourceUsageRecord, error) {
-
-	labelSelector, err := r.checkManager.GetLabelSelector(ctx)
-	if err != nil {
-		return nil, err
-	}
+func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context, targetNamespace string, labelSelector labels.Selector) ([]recording.ResourceUsageRecord, error) {
 
 	time.Sleep(2 * time.Second) // Give the workload some time to be ready with the updated security context
 
-	metricsRecorder := recorder.NewMetricsRecorder(
+	metricsRecorder := recording.NewMetricsRecorder(
 		ctx,
 		r.Client,
 	)
@@ -695,14 +653,9 @@ func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context, targetNamespace
 	)
 }
 
-func (r *WorkloadCheckRunner) recordLogs(ctx context.Context, targetNamespace string, previous bool) (map[string][]string, error) {
+func (r *WorkloadCheckRunner) recordLogs(ctx context.Context, targetNamespace string, previous bool, labelSelector labels.Selector) (map[string][]string, error) {
 
-	labelSelector, err := r.checkManager.GetLabelSelector(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	podLogRecorder := recorder.NewPodLogRecorder(ctx, r.Client)
+	podLogRecorder := recording.NewPodLogRecorder(ctx, r.Client)
 
 	return podLogRecorder.RecordLogs(
 		ctx,

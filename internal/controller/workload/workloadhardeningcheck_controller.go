@@ -7,7 +7,6 @@ import (
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
 	corev1 "k8s.io/api/core/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -23,6 +22,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/namespace"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
@@ -76,7 +76,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// ConditionFinished is set to true when the reconciliation is finished
 	if meta.IsStatusConditionTrue(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeFinished) {
-		logger.Info("WorkloadHardeningCheck is already finished, skipping reconciliation")
+		logger.V(1).Info("WorkloadHardeningCheck is already finished, skipping reconciliation")
 		return ctrl.Result{}, nil
 	}
 
@@ -91,6 +91,11 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			Reason:  checksv1alpha1.ConditionTypeFinished,
 			Message: "Finished, recommendation ready",
 		})
+
+		// Remove no longer needed check conditions
+		if err == nil {
+			err = checkManager.RemoveCheckConditions(ctx)
+		}
 
 		return ctrl.Result{}, err
 	}
@@ -196,44 +201,6 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 		return ctrl.Result{RequeueAfter: checkManager.GetCheckDuration() + 10*time.Second}, nil
 	}
 
-	// Verify if the workload is running, if it is not running, we will never get it running in a cloned namespace
-	originalRunnig, err := checkManager.VerifyRunning(ctx, workloadHardening.GetNamespace())
-	if err != nil {
-		logger.Error(err, "Failed to verify if the workload is running")
-		return ctrl.Result{}, err
-	}
-	if !originalRunnig {
-
-		// If the original workload is not running, and it's the first time we are checking this, we will set the condition to Unknown, and retry after 1 minute
-		// If the condition is already set to Unknown, this is the second attempt, and we consider it a failure
-		if meta.IsStatusConditionPresentAndEqual(workloadHardening.Status.Conditions, checksv1alpha1.ConditionTypeFinished, metav1.ConditionUnknown) {
-			logger.Info("Original workload is not running, marking as failed")
-			err = checkManager.SetCondition(ctx, metav1.Condition{
-				Type:    checksv1alpha1.ConditionTypeFinished,
-				Status:  metav1.ConditionTrue,
-				Reason:  "OriginalNotRunning",
-				Message: "Original workload is not running, cannot proceed with checks",
-			})
-			if err != nil {
-				logger.Error(err, "Failed to set condition for not running workload")
-			}
-			return ctrl.Result{}, nil
-		} else {
-			logger.Info("Original workload is not running, requeuing")
-			err = checkManager.SetCondition(ctx, metav1.Condition{
-				Type:    checksv1alpha1.ConditionTypeFinished,
-				Status:  metav1.ConditionUnknown,
-				Reason:  "OriginalNotRunning",
-				Message: "Original workload is not running, will retry in 1 minute",
-			})
-			if err != nil {
-				logger.Error(err, "Failed to set condition for not running workload")
-			}
-			return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
-		}
-
-	}
-
 	// We use the baseline duration to determine how long we should wait before requeuing the reconciliation
 	duration := checkManager.GetCheckDuration()
 
@@ -259,27 +226,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	if !checkManager.BaselineRecorded() {
 		logger.Info("Baseline not recorded yet. Starting baseline recording")
-		// Set the condition to indicate that we are starting the baseline recording
-
-		baselineRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline")
-		go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
-
-		checkManager.SetCondition(ctx, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionFalse,
-			Reason:  checksv1alpha1.ReasonBaselineRecording,
-			Message: "Baseline recording started",
-		})
-
-		// The baseline is recorded twice, to make the log matching better, as the logs are ingested using different timestamps
-
-		offset := 10 + utilrand.Intn(9)                 // Random offset between 10 and 19 seconds to avoid all checks running at the same time
-		time.Sleep(time.Duration(offset) * time.Second) // Sleep for a short duration to allow the first baseline recording to start
-		baselineRunner = runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline-2")
-		go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
-
-		// Requeue the reconciliation after the baseline duration, to continue with the next steps
-		return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
+		return r.recordBaseline(ctx, workloadHardening, checkManager)
 	}
 
 	if checkManager.BaselineRecorded() {
@@ -299,96 +246,129 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 	// If we are here, it means that the baseline recording is done successfully
 	// We can now start recording the workload under test with different security context configurations
-
 	if checkManager.BaselineRecorded() && !checkManager.AllChecksFinished() {
-		logger.Info("Not all checks are finished, running checks")
+		return r.recordChecks(ctx, workloadHardening, checkManager)
+	}
 
-		requiredChecks := checkManager.GetRequiredCheckRuns(ctx)
+	return ctrl.Result{}, nil
+}
 
-		logger.Info("Required checks to run", "checks", requiredChecks)
+func (r *WorkloadHardeningCheckReconciler) recordBaseline(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, checkManager *workload.WorkloadCheckManager) (ctrl.Result, error) {
+	// Set the condition to indicate that we are starting the baseline recording
 
-		checkManager.SetCondition(ctx, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionFalse,
-			Reason:  checksv1alpha1.ReasonCheckRecording,
-			Message: "Check recording started",
-		})
+	baselineRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline")
+	go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
-		if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
-			logger.V(2).Info("Running checks in parallel mode")
-			// Run all checks in parallel
-			for _, checkType := range requiredChecks {
+	checkManager.SetCondition(ctx, metav1.Condition{
+		Type:    checksv1alpha1.ConditionTypeFinished,
+		Status:  metav1.ConditionFalse,
+		Reason:  checksv1alpha1.ReasonBaselineRecording,
+		Message: "Baseline recording started",
+	})
 
-				if checkManager.CheckRecorded(checkType) {
-					logger.Info("Check already finished, skipping", "checkType", checkType)
-					continue // Skip if the check is already recorded
-				}
+	// The baseline is recorded twice, to make the log matching better, as the logs are ingested using different timestamps
 
-				if checkManager.CheckInProgress(checkType) {
+	offset := 10 + utilrand.Intn(9)                 // Random offset between 10 and 19 seconds to avoid all checks running at the same time
+	time.Sleep(time.Duration(offset) * time.Second) // Sleep for a short duration to allow the first baseline recording to start
+	baselineRunner = runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline-2")
+	go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
-					if checkManager.CheckOverdue(checkType) {
-						checkManager.SetCondition(ctx, metav1.Condition{
-							Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
-							Status:  metav1.ConditionUnknown,
-							Reason:  checksv1alpha1.ReasonRequeue,
-							Message: "Check is still running, but last transition time is older than 2x duration, requeuing",
-						})
+	// Requeue the reconciliation after the baseline duration, to continue with the next steps
+	return ctrl.Result{RequeueAfter: checkManager.GetCheckDuration() + 10*time.Second}, nil
 
-						logger.Info("Check is overdue, rescheduling", "checkType", checkType)
+}
 
-					} else {
-						logger.Info("Check still running not yet overdue, skipping", "checkType", checkType)
-						continue // Skip if the check might still be running
-					}
+func (r *WorkloadHardeningCheckReconciler) recordChecks(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, checkManager *workload.WorkloadCheckManager) (ctrl.Result, error) {
+	logger := logf.FromContext(ctx).WithName("recordChecks")
 
-				}
+	logger.Info("Not all checks are finished, running checks")
 
-				logger.Info("Starting new check run", "checkType", checkType)
+	requiredChecks := checkManager.GetRequiredCheckRuns(ctx)
 
-				securityContext := checkManager.GetSecurityContextForCheckType(checkType)
+	logger.Info("Required checks to run", "checks", requiredChecks)
 
-				checkRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
+	checkManager.SetCondition(ctx, metav1.Condition{
+		Type:    checksv1alpha1.ConditionTypeFinished,
+		Status:  metav1.ConditionFalse,
+		Reason:  checksv1alpha1.ReasonCheckRecording,
+		Message: "Check recording started",
+	})
 
-				go checkRunner.RunCheck(ctx, securityContext)
+	if workloadHardening.Spec.RunMode == checksv1alpha1.RunModeParallel {
+		logger.V(2).Info("Running checks in parallel mode")
+		// Run all checks in parallel
+		for _, checkType := range requiredChecks {
+
+			if checkManager.CheckRecorded(checkType) {
+				logger.Info("Check already finished, skipping", "checkType", checkType)
+				continue // Skip if the check is already recorded
 			}
 
-			// Requeue the reconciliation after the baseline duration, to continue with the next steps
-			return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
-		} else {
-			logger.Info("Running checks in sequential mode")
+			if checkManager.CheckInProgress(checkType) {
 
-			for _, checkType := range requiredChecks {
-				if checkManager.CheckRecorded(checkType) {
-					logger.V(2).Info("Check already finished, skipping", "checkType", checkType)
+				if checkManager.CheckOverdue(checkType) {
+					checkManager.SetCondition(ctx, metav1.Condition{
+						Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
+						Status:  metav1.ConditionUnknown,
+						Reason:  checksv1alpha1.ReasonRequeue,
+						Message: "Check is still running, but last transition time is older than 2x duration, requeuing",
+					})
+
+					logger.Info("Check is overdue, rescheduling", "checkType", checkType)
+
+				} else {
+					logger.Info("Check still running not yet overdue, skipping", "checkType", checkType)
+					continue // Skip if the check might still be running
+				}
+
+			}
+
+			logger.Info("Starting new check run", "checkType", checkType)
+
+			securityContext := checkManager.GetSecurityContextForCheckType(checkType)
+
+			checkRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
+
+			go checkRunner.RunCheck(ctx, securityContext)
+		}
+
+		// Requeue the reconciliation after the baseline duration, to continue with the next steps
+		return ctrl.Result{RequeueAfter: checkManager.GetCheckDuration() + 10*time.Second}, nil
+	} else {
+		logger.Info("Running checks in sequential mode")
+
+		for _, checkType := range requiredChecks {
+			if checkManager.CheckRecorded(checkType) {
+				logger.V(2).Info("Check already finished, skipping", "checkType", checkType)
+				continue // Skip if the check is already recorded
+			}
+			if checkManager.CheckInProgress(checkType) {
+
+				if checkManager.CheckOverdue(checkType) {
+					checkManager.SetCondition(ctx, metav1.Condition{
+						Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
+						Status:  metav1.ConditionUnknown,
+						Reason:  checksv1alpha1.ReasonRequeue,
+						Message: "Check is still running, but last transition time is older than duration + 1 minute, requeuing",
+					})
+
+				} else {
+					logger.V(2).Info("Check still running, skipping", "checkType", checkType)
 					continue // Skip if the check is already recorded
 				}
-				if checkManager.CheckInProgress(checkType) {
-
-					if checkManager.CheckOverdue(checkType) {
-						checkManager.SetCondition(ctx, metav1.Condition{
-							Type:    titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck,
-							Status:  metav1.ConditionUnknown,
-							Reason:  checksv1alpha1.ReasonRequeue,
-							Message: "Check is still running, but last transition time is older than duration + 1 minute, requeuing",
-						})
-
-					} else {
-						logger.V(2).Info("Check still running, skipping", "checkType", checkType)
-						continue // Skip if the check is already recorded
-					}
-				}
-
-				securityContext := checkManager.GetSecurityContextForCheckType(checkType)
-				checkRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
-				logger.Info("Running check", "checkType", checkType)
-				go checkRunner.RunCheck(ctx, securityContext)
-
-				// Requeue the reconciliation after the  duration, to continue with the next check
-				return ctrl.Result{RequeueAfter: duration + 10*time.Second}, nil
 			}
+
+			securityContext := checkManager.GetSecurityContextForCheckType(checkType)
+			checkRunner := runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, checkType)
+			logger.Info("Running check", "checkType", checkType)
+			go checkRunner.RunCheck(ctx, securityContext)
+
+			// Requeue the reconciliation after the  duration, to continue with the next check
+			return ctrl.Result{RequeueAfter: checkManager.GetCheckDuration() + 10*time.Second}, nil
 		}
 	}
 
+	// We don't get here... either of the if/else branches should return
 	return ctrl.Result{}, nil
 }
 
@@ -423,7 +403,7 @@ func (r *WorkloadHardeningCheckReconciler) cleanupReconcileLoop(ctx context.Cont
 
 	for _, ns := range checkNamespaces.Items {
 		log.Info("Deleting namespace", "namespace", ns.Name)
-		err = r.deleteNamespace(ctx, ns.Name)
+		err = namespace.Delete(ctx, r.Client, ns.Name)
 		if err != nil {
 			log.Error(err, "Failed to delete namespace", "namespace", ns.Name)
 		} else {
@@ -433,38 +413,6 @@ func (r *WorkloadHardeningCheckReconciler) cleanupReconcileLoop(ctx context.Cont
 
 	return ctrl.Result{}, nil
 
-}
-
-func (r *WorkloadHardeningCheckReconciler) deleteNamespace(ctx context.Context, namespaceName string) error {
-	log := logf.FromContext(ctx).WithValues("namespace", namespaceName)
-	targetNs := &corev1.Namespace{}
-	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			log.Info("Namespace already deleted")
-			return nil
-		}
-		log.Error(err, "Failed to get Namespace for deletion")
-		return err
-	}
-	log.Info("Deleting Namespace")
-	err = r.Delete(ctx, targetNs)
-	if err != nil {
-		log.Error(err, "Failed to delete Namespace")
-		return err
-	}
-
-	// Remove all ClusterRoleBindings that are associated with this namespace
-	clusterRoleBindingList := &rbacv1.ClusterRoleBindingList{}
-	r.List(ctx, clusterRoleBindingList, client.MatchingFields{"metadata.name": namespaceName})
-	for _, clusterRoleBinding := range clusterRoleBindingList.Items {
-		if clusterRoleBinding.Labels["orakel.fhnw.ch/target-namespace"] == namespaceName {
-			log.Info("Deleting ClusterRoleBinding", "name", clusterRoleBinding.Name)
-			r.Delete(ctx, &clusterRoleBinding)
-		}
-	}
-
-	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

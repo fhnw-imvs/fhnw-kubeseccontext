@@ -1,4 +1,4 @@
-package recorder
+package recording
 
 import (
 	"bytes"

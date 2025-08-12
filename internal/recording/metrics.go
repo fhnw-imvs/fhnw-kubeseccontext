@@ -1,4 +1,4 @@
-package recorder
+package recording
 
 import (
 	"context"
@@ -21,8 +21,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
-
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 )
 
 var (
@@ -72,7 +70,7 @@ func NewMetricsRecorder(ctx context.Context, ksClient client.Client) *MetricsRec
 	}
 }
 
-func (r *MetricsRecorder) RecordMetrics(ctx context.Context, targetNamespace string, labelSelector labels.Selector, checkDurationSeconds time.Duration) ([]recording.ResourceUsageRecord, error) {
+func (r *MetricsRecorder) RecordMetrics(ctx context.Context, targetNamespace string, labelSelector labels.Selector, checkDuration time.Duration) ([]ResourceUsageRecord, error) {
 	// get pods under observation, we use the label selector from the workload under test
 	pods := &corev1.PodList{}
 PodsAssigned:
@@ -137,12 +135,12 @@ PodsAssigned:
 	wg.Add(len(podsToRecord))
 
 	// Initialize the channels with the expected capacity to avoid blocking
-	metricsChannel := make(chan *recording.RecordedMetrics, len(podsToRecord))
+	metricsChannel := make(chan *RecordedMetrics, len(podsToRecord))
 
 	for _, pod := range podsToRecord {
 		go func() {
 			// the metrics are collected per pod
-			recordedMetrics, err := r.recordPodMetrics(ctx, &pod, checkDurationSeconds)
+			recordedMetrics, err := r.recordPodMetrics(ctx, &pod, checkDuration)
 			if err != nil {
 				r.logger.Error(err, "failed recording metrics")
 			} else {
@@ -164,7 +162,7 @@ PodsAssigned:
 	// close channels so that the range loops will stop
 	close(metricsChannel)
 
-	resourceUsageRecords := []recording.ResourceUsageRecord{}
+	resourceUsageRecords := []ResourceUsageRecord{}
 	for result := range metricsChannel {
 		for _, usage := range result.Usage {
 			resourceUsageRecords = append(resourceUsageRecords, usage)
@@ -178,14 +176,14 @@ PodsAssigned:
 	return resourceUsageRecords, nil
 }
 
-func (r *MetricsRecorder) recordPodMetrics(ctx context.Context, pod *corev1.Pod, duration time.Duration) (*recording.RecordedMetrics, error) {
+func (r *MetricsRecorder) recordPodMetrics(ctx context.Context, pod *corev1.Pod, duration time.Duration) (*RecordedMetrics, error) {
 	log := r.logger.WithValues(
 		"podName", pod.Name,
 		"podUID", pod.UID,
 		"targetNamespace", pod.Namespace,
 	)
 
-	recordedMetrics := map[metav1.Time]recording.ResourceUsageRecord{}
+	recordedMetrics := map[metav1.Time]ResourceUsageRecord{}
 
 	start := time.Now()
 	log.Info("recording resource usage for pod", "expectedEndTime", start.Add(duration))
@@ -220,7 +218,7 @@ func (r *MetricsRecorder) recordPodMetrics(ctx context.Context, pod *corev1.Pod,
 			continue
 		}
 
-		metric := recording.ResourceUsageRecord{
+		metric := ResourceUsageRecord{
 			Time:         metav1.Now(),
 			CpuNanoCores: int64(*podResources.CPU.UsageNanoCores),
 			MemoryBytes:  int64(*podResources.Memory.WorkingSetBytes),
@@ -236,7 +234,7 @@ func (r *MetricsRecorder) recordPodMetrics(ctx context.Context, pod *corev1.Pod,
 
 	log.Info("recorded resource usage", "dataPoints", len(recordedMetrics))
 
-	recordedMetricsData := recording.RecordedMetrics{
+	recordedMetricsData := RecordedMetrics{
 		Pod:      pod.Name,
 		Start:    start,
 		End:      time.Now(),

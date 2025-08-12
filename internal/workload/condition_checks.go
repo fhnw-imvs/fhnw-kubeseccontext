@@ -41,6 +41,36 @@ func (m *WorkloadCheckManager) SetCondition(ctx context.Context, condition metav
 	return err
 }
 
+func (m *WorkloadCheckManager) RemoveCheckConditions(ctx context.Context) error {
+	// Remove all check conditions from the workloadHardeningCheck
+	m.logger.V(2).Info("Removing all check conditions from WorkloadHardeningCheck", "name", m.workloadHardeningCheck.Name)
+
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+
+		// Re-fetch the workload hardening check Custom Resource
+		if err := m.Get(ctx, types.NamespacedName{Name: m.workloadHardeningCheck.Name, Namespace: m.workloadHardeningCheck.Namespace}, m.workloadHardeningCheck); err != nil {
+			return err
+		}
+
+		remainingConditions := []metav1.Condition{}
+		// Iterate over the existing conditions and keep only those that are not related to checks
+		for _, condition := range m.workloadHardeningCheck.Status.Conditions {
+			if condition.Type == checksv1alpha1.ConditionTypeFinished {
+				// Keep the Finished condition, as it is not a check condition
+				remainingConditions = append(remainingConditions, condition)
+			}
+		}
+
+		// Overwrite the conditions with only the finished condition
+		m.workloadHardeningCheck.Status.Conditions = remainingConditions
+
+		return m.Status().Update(ctx, m.workloadHardeningCheck)
+
+	})
+
+	return err
+}
+
 func (m *WorkloadCheckManager) BaselineRecorded() bool {
 	m.refreshWorkloadHardeningCheck()
 	if meta.IsStatusConditionTrue(m.workloadHardeningCheck.Status.Conditions, checksv1alpha1.ConditionTypeBaseline) {

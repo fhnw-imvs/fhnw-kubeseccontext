@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -30,23 +29,11 @@ var resourcesToSkip = []string{
 	"namespacehardeningchecks",
 }
 
-type NamespaceCloner struct {
-	client.Client
-	logger logr.Logger
-}
-
-func NewNamespaceCloner(ksClient client.Client) *NamespaceCloner {
-	return &NamespaceCloner{
-		Client: ksClient,
-		logger: logf.Log.WithName("namespace-cloner"),
-	}
-}
-
-func (c *NamespaceCloner) Clone(ctx context.Context, sourceNamespace, targetNamespace, suffix string) error {
-	log := c.logger.WithValues("targetNamespace", targetNamespace, "suffix", suffix)
+func Clone(ctx context.Context, cl client.Client, sourceNamespace, targetNamespace, suffix string) error {
+	log := logf.FromContext(ctx).WithName("namespace-cloner").WithValues("targetNamespace", targetNamespace, "suffix", suffix)
 
 	targetNs := &corev1.Namespace{}
-	err := c.Get(ctx, client.ObjectKey{Name: targetNamespace}, targetNs)
+	err := cl.Get(ctx, client.ObjectKey{Name: targetNamespace}, targetNs)
 	// we expect at least a NotFound error here, otherwise the namespace already exists, and we don't want to override it
 	if err == nil {
 		return fmt.Errorf("target namespace already exists %s", targetNamespace)
@@ -67,14 +54,14 @@ func (c *NamespaceCloner) Clone(ctx context.Context, sourceNamespace, targetName
 		"orakel.fhnw.ch/suffix":           suffix,
 	}
 
-	err = c.Create(ctx, targetNs)
+	err = cl.Create(ctx, targetNs)
 	if err != nil {
 		return fmt.Errorf("error creating target namespace: %w", err)
 	}
 
 	// First let's clone the clusterRoleBindings, as they are not namespaced
 	// and pods might fail if their serviceAccounts are not bound to the correct roles
-	clonedClusterRoleBindings, err := c.cloneClusterRoleBindings(ctx, sourceNamespace, targetNamespace, suffix)
+	clonedClusterRoleBindings, err := cloneClusterRoleBindings(ctx, cl, sourceNamespace, targetNamespace, suffix)
 	if err != nil {
 		return fmt.Errorf("error cloning cluster role bindings: %w", err)
 	}
@@ -134,7 +121,7 @@ func (c *NamespaceCloner) Clone(ctx context.Context, sourceNamespace, targetName
 			}
 		}
 
-		err = c.Create(ctx, clonedResource)
+		err = cl.Create(ctx, clonedResource)
 		if err != nil {
 			log.Error(err, fmt.Sprintf("error creating %s/%s", resource.GetKind(), resource.GetName()))
 		} else {
@@ -147,11 +134,11 @@ func (c *NamespaceCloner) Clone(ctx context.Context, sourceNamespace, targetName
 	return nil
 }
 
-func (c *NamespaceCloner) cloneClusterRoleBindings(ctx context.Context, sourceNamespace, targetNamespace, suffix string) (int, error) {
-	log := c.logger.WithValues("targetNamespace", targetNamespace, "suffix", suffix)
+func cloneClusterRoleBindings(ctx context.Context, cl client.Client, sourceNamespace, targetNamespace, suffix string) (int, error) {
+	log := logf.FromContext(ctx).WithName("namespace-cloner").WithValues("targetNamespace", targetNamespace, "suffix", suffix)
 
 	clusterRoleBindingList := &rbacv1.ClusterRoleBindingList{}
-	c.List(ctx, clusterRoleBindingList)
+	cl.List(ctx, clusterRoleBindingList)
 
 	clonedClusterRoleBindings := 0
 	if len(clusterRoleBindingList.Items) > 0 {
@@ -208,7 +195,7 @@ func (c *NamespaceCloner) cloneClusterRoleBindings(ctx context.Context, sourceNa
 					}
 				}
 
-				err := c.Create(ctx, clonedClusterRoleBinding)
+				err := cl.Create(ctx, clonedClusterRoleBinding)
 				if err != nil {
 					return clonedClusterRoleBindings, fmt.Errorf("error creating cluster role binding %s: %w", clusterRoleBinding.Name, err)
 				}

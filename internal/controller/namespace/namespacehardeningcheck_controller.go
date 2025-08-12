@@ -112,18 +112,7 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 		})
 	}
 
-	topLevelResources, err := r.getTopLevelResourcesToCheck(ctx, namespaceHardening)
-	if err != nil {
-		logger.Error(err, "Failed to get top-level resources in target namespace", "namespace", namespaceHardening.Spec.TargetNamespace)
-
-		r.SetCondition(ctx, namespaceHardening, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionTrue,
-			Reason:  checksv1alpha1.ReasonAnalysisFailed,
-			Message: "Failed to get top-level resources in target namespace",
-		})
-		return ctrl.Result{RequeueAfter: 1 * time.Minute}, err
-	}
+	topLevelResources := r.getTopLevelResourcesToCheck(ctx, namespaceHardening)
 
 	// Filter topLevelResoruces for those compatible with WorkloadHardeningCheck
 	if len(topLevelResources) == 0 {
@@ -202,7 +191,7 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 			Reason:  checksv1alpha1.ReasonNamespaceInProgress,
 			Message: fmt.Sprintf("NamespaceHardeningCheck is in progress, %d/%d finished", finishedCount, len(topLevelResources)),
 		})
-		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// All WorkloadHardeningChecks are finished, we can run a final check with all workloads hardened at once
@@ -279,9 +268,7 @@ func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Cont
 		finalCheckNamespace = finalCheckNamespace[:63] // Ensure the namespace name is within the 63 character limit
 	}
 
-	namespaceCloner := namespace.NewNamespaceCloner(r.Client)
-
-	err := namespaceCloner.Clone(ctx, namespaceHardening.Spec.TargetNamespace, finalCheckNamespace, namespaceHardening.Spec.Suffix)
+	err := namespace.Clone(ctx, r.Client, namespaceHardening.Spec.TargetNamespace, finalCheckNamespace, namespaceHardening.Spec.Suffix)
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			logger.Info("Final check namespace already exists, using it", "namespace", finalCheckNamespace)
@@ -362,10 +349,8 @@ Resources:
 		}
 	}
 
-	// delete namespace after final check
-	if err := r.Delete(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
-		Name: finalCheckNamespace,
-	}}); err != nil {
+	err = namespace.Delete(ctx, r.Client, finalCheckNamespace)
+	if err != nil {
 		logger.Error(err, "Failed to delete cloned namespace after final check", "namespace", finalCheckNamespace)
 		return success, fmt.Errorf("failed to delete cloned namespace %s after final check: %w", finalCheckNamespace, err)
 	}
@@ -463,7 +448,7 @@ func (r *NamespaceHardeningCheckReconciler) createWorkloadHardeningCheck(ctx con
 	return workloadCheck, nil
 }
 
-func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck) ([]*unstructured.Unstructured, error) {
+func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck) []*unstructured.Unstructured {
 	logger := logf.FromContext(ctx).WithName("getTopLevelResourcesToCheck")
 
 	// Fetch all top-level resources in the target namespace
@@ -471,7 +456,7 @@ func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx cont
 
 	if len(allTopLevelResources) == 0 {
 		logger.Info("No top-level resources found in target namespace", "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-		return []*unstructured.Unstructured{}, nil
+		return []*unstructured.Unstructured{}
 	}
 
 	// Filter for resources that are compatible with WorkloadHardeningCheck,
@@ -486,7 +471,7 @@ func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx cont
 		}
 	}
 
-	return usableResources, nil
+	return usableResources
 }
 
 func (r *NamespaceHardeningCheckReconciler) SetCondition(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck, condition metav1.Condition) error {
