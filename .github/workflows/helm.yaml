@@ -36,7 +36,7 @@ jobs:
         with:
           name: orakel-of-funk
           repository: fhnw-imvs/fhnw-kubeseccontext
-          tag: ${{ steps.docker_meta.outputs.tags }}
+          tag: v${{ steps.docker_meta.outputs.version }}
           path: deploy/charts/orakel-of-funk
           registry: ghcr.io
           registry_username: ${{ github.actor }}
