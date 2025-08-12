@@ -20,6 +20,7 @@ import (
 	"crypto/tls"
 	"flag"
 	"os"
+	"path/filepath"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -30,6 +31,7 @@ import (
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/certwatcher"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
@@ -68,6 +70,11 @@ func main() {
 	var probeAddr string
 	var secureMetrics bool
 	var enableHTTP2 bool
+
+	var metricsCertPath, metricsCertName, metricsCertKey string
+
+	var webhookCertPath, webhookCertName, webhookCertKey string
+
 	var tlsOpts []func(*tls.Config)
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
@@ -79,6 +86,14 @@ func main() {
 		"If set, the metrics endpoint is served securely via HTTPS. Use --metrics-secure=false to use HTTP instead.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+
+	flag.StringVar(&webhookCertPath, "webhook-cert-path", "", "The directory that contains the webhook certificate.")
+	flag.StringVar(&webhookCertName, "webhook-cert-name", "tls.crt", "The name of the webhook certificate file.")
+	flag.StringVar(&webhookCertKey, "webhook-cert-key", "tls.key", "The name of the webhook key file.")
+	flag.StringVar(&metricsCertPath, "metrics-cert-path", "", "The directory that contains the metrics server certificate.")
+	flag.StringVar(&metricsCertName, "metrics-cert-name", "tls.crt", "The name of the metrics server certificate file.")
+	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
+
 	flag.StringVar(&valkeyHost, "valkey-host", valkeyHost, "The host of the Valkey server.")
 	flag.StringVar(&valkeyPort, "valkey-port", valkeyPort, "The port of the Valkey server.")
 	opts := zap.Options{
@@ -109,8 +124,30 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
+	var metricsCertWatcher, webhookCertWatcher *certwatcher.CertWatcher
+	webhookTLSOpts := tlsOpts
+
+	if len(webhookCertPath) > 0 {
+		setupLog.Info("Initializing webhook certificate watcher using provided certificates",
+			"webhook-cert-path", webhookCertPath, "webhook-cert-name", webhookCertName, "webhook-cert-key", webhookCertKey)
+
+		var err error
+		webhookCertWatcher, err = certwatcher.New(
+			filepath.Join(webhookCertPath, webhookCertName),
+			filepath.Join(webhookCertPath, webhookCertKey),
+		)
+		if err != nil {
+			setupLog.Error(err, "Failed to initialize webhook certificate watcher")
+			os.Exit(1)
+		}
+
+		webhookTLSOpts = append(webhookTLSOpts, func(config *tls.Config) {
+			config.GetCertificate = webhookCertWatcher.GetCertificate
+		})
+	}
+
 	webhookServer := webhook.NewServer(webhook.Options{
-		TLSOpts: tlsOpts,
+		TLSOpts: webhookTLSOpts,
 	})
 
 	// Metrics endpoint is enabled in 'config/default/kustomization.yaml'. The Metrics options configure the server.
@@ -127,6 +164,25 @@ func main() {
 		// unauthorized access to sensitive metrics data. Consider replacing with CertDir, CertName, and KeyName
 		// to provide certificates, ensuring the server communicates using trusted and secure certificates.
 		TLSOpts: tlsOpts,
+	}
+
+	if len(metricsCertPath) > 0 {
+		setupLog.Info("Initializing metrics certificate watcher using provided certificates",
+			"metrics-cert-path", metricsCertPath, "metrics-cert-name", metricsCertName, "metrics-cert-key", metricsCertKey)
+
+		var err error
+		metricsCertWatcher, err = certwatcher.New(
+			filepath.Join(metricsCertPath, metricsCertName),
+			filepath.Join(metricsCertPath, metricsCertKey),
+		)
+		if err != nil {
+			setupLog.Error(err, "Failed to initialize metrics certificate watcher")
+			os.Exit(1)
+		}
+
+		metricsServerOptions.TLSOpts = append(metricsServerOptions.TLSOpts, func(config *tls.Config) {
+			config.GetCertificate = metricsCertWatcher.GetCertificate
+		})
 	}
 
 	if secureMetrics {
@@ -204,6 +260,22 @@ func main() {
 	setupLog.Info("namespace-hardening-controller successfully configured")
 
 	// +kubebuilder:scaffold:builder
+
+	if metricsCertWatcher != nil {
+		setupLog.Info("Adding metrics certificate watcher to manager")
+		if err := mgr.Add(metricsCertWatcher); err != nil {
+			setupLog.Error(err, "Unable to add metrics certificate watcher to manager")
+			os.Exit(1)
+		}
+	}
+
+	if webhookCertWatcher != nil {
+		setupLog.Info("Adding webhook certificate watcher to manager")
+		if err := mgr.Add(webhookCertWatcher); err != nil {
+			setupLog.Error(err, "Unable to add webhook certificate watcher to manager")
+			os.Exit(1)
+		}
+	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")

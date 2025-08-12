@@ -42,6 +42,7 @@ spec:
           - --leader-elect
           - --health-probe-bind-address=:8081
         image: controller:latest
+        ports: []
         name: manager
         env:
           - name: ENABLE_WEBHOOKS
@@ -70,5 +71,7 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
+        volumeMounts: []
+      volumes: []
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
