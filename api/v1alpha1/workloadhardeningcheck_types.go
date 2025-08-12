@@ -180,9 +180,7 @@ func (c *ContainerSecurityContextDefaults) ToK8sSecurityContext() *corev1.Securi
 	if len(c.CapabilitiesDrop) > 0 {
 		// Convert string slice to corev1.Capabilities
 		dropCapabilities := make([]corev1.Capability, len(c.CapabilitiesDrop))
-		for i, cap := range c.CapabilitiesDrop {
-			dropCapabilities[i] = corev1.Capability(cap)
-		}
+		copy(dropCapabilities, c.CapabilitiesDrop)
 
 		sc.Capabilities = &corev1.Capabilities{
 			Drop: dropCapabilities,

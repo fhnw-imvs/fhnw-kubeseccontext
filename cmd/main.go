@@ -44,7 +44,6 @@ import (
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/controller/namespace"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/controller/workload"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
-	webhookchecksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/webhook/v1alpha1"
 	webhookv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/webhook/v1alpha1"
 	// +kubebuilder:scaffold:imports
 )
@@ -232,7 +231,7 @@ func main() {
 	}
 	// nolint:goconst
 	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
-		if err = webhookchecksv1alpha1.SetupWorkloadHardeningCheckWebhookWithManager(mgr); err != nil {
+		if err = webhookv1alpha1.SetupWorkloadHardeningCheckWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "unable to create webhook", "webhook", "WorkloadHardeningCheck")
 			os.Exit(1)
 		}

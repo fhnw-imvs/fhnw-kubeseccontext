@@ -31,7 +31,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type WorkloadCheckRunner struct {
@@ -56,7 +56,7 @@ var titleCase = cases.Title(language.English)
 
 func NewWorkloadCheckRunner(ctx context.Context, valKeyClient *valkey.ValkeyClient, recorder record.EventRecorder, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck, checkType string) *WorkloadCheckRunner {
 
-	log := log.FromContext(ctx).WithName("CheckRunner").WithValues("checkType", checkType)
+	log := logf.FromContext(ctx).WithName("CheckRunner").WithValues("checkType", checkType)
 
 	conditionType := titleCase.String(checkType) + checksv1alpha1.ConditionTypeCheck
 	if strings.Contains(strings.ToLower(checkType), "baseline") {
@@ -111,7 +111,7 @@ func (r *WorkloadCheckRunner) generateTargetNamespaceName() string {
 
 	// max length: 63
 	// suffix length: 8
-	// checkType: variable ~10-30 characters => find abreviation... for checkType
+	// checkType: variable ~10-30 characters => find abbreviation... for checkType
 
 	namespaceName := strings.ToLower(fmt.Sprintf("%s-%s-%s", base, r.workloadHardeningCheck.Spec.Suffix, r.checkType))
 
@@ -188,6 +188,9 @@ func (r *WorkloadCheckRunner) deleteCheckNamespace(ctx context.Context) error {
 		if clusterRoleBinding.Labels["orakel.fhnw.ch/target-namespace"] == namespaceName {
 			log.Info("Deleting ClusterRoleBinding", "name", clusterRoleBinding.Name)
 			err = r.Delete(ctx, &clusterRoleBinding)
+			if err != nil {
+				log.Error(err, "Failed to delete ClusterRoleBinding", "name", clusterRoleBinding.Name)
+			}
 		}
 	}
 
@@ -225,7 +228,7 @@ func (r *WorkloadCheckRunner) setStatusFailed(ctx context.Context, message strin
 
 }
 
-func (r *WorkloadCheckRunner) setStatusFinishedFailure(ctx context.Context, message string, failureReason string, recording recording.WorkloadRecording) {
+func (r *WorkloadCheckRunner) setStatusFinishedFailure(ctx context.Context, message string, failureReason string, workloadRecording recording.WorkloadRecording) {
 	conditionReason := checksv1alpha1.ReasonCheckRecordingFailed
 	if r.conditionType == checksv1alpha1.ConditionTypeBaseline {
 		conditionReason = checksv1alpha1.ReasonBaselineRecordingFailed
@@ -244,7 +247,7 @@ func (r *WorkloadCheckRunner) setStatusFinishedFailure(ctx context.Context, mess
 
 	// Load the logs into the log orakel for analysis
 	anomalies := make(map[string][]string)
-	for container, logs := range recording.Logs {
+	for container, logs := range workloadRecording.Logs {
 		logOrakel := orakel.NewLogOrakel()
 		logOrakel.LoadBaseline(logs)
 		anomalies[container] = logOrakel.GetTemplates()
@@ -254,12 +257,12 @@ func (r *WorkloadCheckRunner) setStatusFinishedFailure(ctx context.Context, mess
 		Name:                 r.checkType,
 		RecordingSuccessfull: ptr.To(false),
 		CheckSuccessfull:     ptr.To(false),
-		SecurityContext:      recording.SecurityContextConfigurations,
+		SecurityContext:      workloadRecording.SecurityContextConfigurations,
 		FailureReason:        failureReason,
 		LogAnomalies:         anomalies,
 	}
 
-	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		if err := r.Get(ctx, types.NamespacedName{Name: r.workloadHardeningCheck.Name, Namespace: r.workloadHardeningCheck.Namespace}, r.workloadHardeningCheck); err != nil {
 			if apierrors.IsNotFound(err) {
 				r.logger.Info("WorkloadHardeningCheck not found, skipping status update")
@@ -351,7 +354,7 @@ func (r *WorkloadCheckRunner) setStatusFinishedSuccessfully(ctx context.Context,
 	})
 
 	if err != nil {
-		log.FromContext(ctx).Error(err, "Failed to update WorkloadHardeningCheck status after recording finished")
+		logf.FromContext(ctx).Error(err, "Failed to update WorkloadHardeningCheck status after recording finished")
 		r.recorder.Event(
 			r.workloadHardeningCheck,
 			corev1.EventTypeWarning,
@@ -475,7 +478,7 @@ func (r *WorkloadCheckRunner) RunCheck(ctx context.Context, securityContext *che
 	}
 
 	// If pods are crashLooping, we still want to record the metrics and logs, but we will mark the check as unsuccessful
-	r.checkSuccessful, err = wh.VerifyReadiness(*workloadUnderTest, r.Client)
+	r.checkSuccessful, _ = wh.VerifyReadiness(workloadUnderTest, r.Client)
 
 	workloadRecording := recording.WorkloadRecording{
 		Type:      r.checkType,
@@ -723,7 +726,7 @@ PodsAssigned:
 		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
 			continue
 		}
-		if pod.ObjectMeta.DeletionTimestamp != nil {
+		if pod.DeletionTimestamp != nil {
 			// Pod is being deleted, skip it
 			continue
 		}

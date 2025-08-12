@@ -37,7 +37,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
@@ -289,7 +288,7 @@ func (r *NamespaceHardeningCheckReconciler) Reconcile(ctx context.Context, req c
 }
 
 func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Context, namespaceHardening *checksv1alpha1.NamespaceHardeningCheck) (bool, error) {
-	logger := log.FromContext(ctx).WithName("createFinalCheckRun")
+	logger := logf.FromContext(ctx).WithName("createFinalCheckRun")
 
 	finalCheckNamespace := namespaceHardening.Spec.TargetNamespace + "-" + namespaceHardening.Spec.Suffix + "-final"
 	if len(finalCheckNamespace) > 63 {
@@ -308,7 +307,7 @@ func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Cont
 	}
 
 	finalCheckNamespaceObj := &corev1.Namespace{}
-	err = r.Get(ctx, types.NamespacedName{Name: finalCheckNamespace}, finalCheckNamespaceObj)
+	r.Get(ctx, types.NamespacedName{Name: finalCheckNamespace}, finalCheckNamespaceObj)
 
 	// Set controller reference to the NamespaceHardeningCheck, to ensure it gets cleaned up automatically
 	ctrl.SetControllerReference(namespaceHardening, finalCheckNamespaceObj, r.Scheme)
@@ -329,7 +328,7 @@ func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Cont
 
 	// Apply securityContext from recommendations to all relevant resources
 	for _, resource := range topLevelResources {
-		if resource.GetKind() == "Deployment" || resource.GetKind() == "StatefulSet" || resource.GetKind() == "DaemonSet" {
+		if workload.IsSupportedUnstructured(resource) {
 			workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, resource)
 			if err != nil {
 				logger.Error(err, "Failed to get workload under test for final check", "kind", resource.GetKind(), "name", resource.GetName())
@@ -357,14 +356,14 @@ func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Cont
 	success := true
 Resources:
 	for _, resource := range topLevelResources {
-		if resource.GetKind() == "Deployment" || resource.GetKind() == "StatefulSet" || resource.GetKind() == "DaemonSet" {
+		if workload.IsSupportedUnstructured(resource) {
 			workloadUnderTest, err := r.GetWorkloadUnderTest(ctx, resource)
 			if err != nil {
 				logger.Error(err, "Failed to get workload under test for final check", "kind", resource.GetKind(), "name", resource.GetName())
 				continue // Skip this resource if we can't get the workload
 			}
 
-			for running := false; !running; running, _ = workload.VerifyReadiness(*workloadUnderTest, r.Client) {
+			for running := false; !running; running, _ = workload.VerifyReadiness(workloadUnderTest, r.Client) {
 				logger.Info("Waiting for workload to be running after security context update", "kind", resource.GetKind(), "name", resource.GetName())
 				time.Sleep(5 * time.Second)
 				r.Get(ctx, types.NamespacedName{Namespace: (*workloadUnderTest).GetNamespace(), Name: (*workloadUnderTest).GetName()}, *workloadUnderTest)
@@ -374,7 +373,7 @@ Resources:
 					r.Recorder.Eventf(namespaceHardening, corev1.EventTypeWarning, "WorkloadNotRunning",
 						"Workload %s/%s did not become running in time after security context update",
 						resource.GetKind(), resource.GetName())
-					success = false
+
 					break Resources // Break out of the loop if any workload does not become running in time
 				}
 			}
@@ -395,7 +394,12 @@ Resources:
 }
 
 func (r *NamespaceHardeningCheckReconciler) GetWorkloadUnderTest(ctx context.Context, resource *unstructured.Unstructured) (*client.Object, error) {
-	logger := log.FromContext(ctx).WithName("GetWorkloadUnderTest")
+	logger := logf.FromContext(ctx).WithName("GetWorkloadUnderTest")
+
+	if !workload.IsSupportedUnstructured(resource) {
+		logger.Error(nil, "Unsupported resource kind for workload under test", "kind", resource.GetKind(), "name", resource.GetName())
+		return nil, fmt.Errorf("unsupported resource kind: %s", resource.GetKind())
+	}
 
 	var workloadUnderTest client.Object
 	switch resource.GetKind() {
@@ -405,8 +409,6 @@ func (r *NamespaceHardeningCheckReconciler) GetWorkloadUnderTest(ctx context.Con
 		workloadUnderTest = &appsv1.StatefulSet{}
 	case "DaemonSet":
 		workloadUnderTest = &appsv1.DaemonSet{}
-	default:
-		return nil, fmt.Errorf("unsupported workload kind: %s", resource.GetKind())
 	}
 
 	if err := r.Get(ctx, client.ObjectKey{Namespace: resource.GetNamespace(), Name: resource.GetName()}, workloadUnderTest); err != nil {
@@ -418,7 +420,7 @@ func (r *NamespaceHardeningCheckReconciler) GetWorkloadUnderTest(ctx context.Con
 }
 
 func (r *NamespaceHardeningCheckReconciler) createWorkloadHardeningCheck(ctx context.Context, namespaceHardeningCheck *checksv1alpha1.NamespaceHardeningCheck, resource *unstructured.Unstructured) (*checksv1alpha1.WorkloadHardeningCheck, error) {
-	logger := log.FromContext(ctx)
+	logger := logf.FromContext(ctx)
 
 	workloadCheck := &checksv1alpha1.WorkloadHardeningCheck{}
 	if err := r.Get(ctx, client.ObjectKey{
@@ -501,14 +503,8 @@ func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx cont
 	// - DaemonSets
 	usableResources := []*unstructured.Unstructured{}
 	for _, resource := range allTopLevelResources {
-		// Check if the resource is a supported workload type
-		switch resource.GetKind() {
-		case "Deployment", "StatefulSet", "DaemonSet":
-			// These are supported workload types
+		if workload.IsSupportedUnstructured(resource) {
 			usableResources = append(usableResources, resource)
-		default:
-			// Unsupported workload type, we can skip it
-			logger.V(3).Info("Skipping unsupported workload type", "kind", resource.GetKind(), "name", resource.GetName(), "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
 		}
 	}
 
@@ -546,7 +542,7 @@ func (r *NamespaceHardeningCheckReconciler) SetCondition(ctx context.Context, na
 
 // Called if the NamespaceHardeningCheck instance is removed or deleted and we need to clean up the resources
 func (r *NamespaceHardeningCheckReconciler) cleanupReconcileLoop(ctx context.Context, name string) (ctrl.Result, error) {
-	_ = log.FromContext(ctx).WithName("cleanupReconcileLoop")
+	_ = logf.FromContext(ctx).WithName("cleanupReconcileLoop")
 
 	// Check if a namespace belonging to the NamespaceHardeningCheck exists
 

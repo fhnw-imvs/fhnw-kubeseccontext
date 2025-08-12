@@ -42,7 +42,7 @@ func TestDropAllCapabilitiesCheck(t *testing.T) {
 			},
 		}
 
-		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true if `Capabilites` are empty")
+		assert.True(t, check.ShouldRun(podSpec), "Expected ShouldRun to return true if `Capabilities` are empty")
 	})
 
 	t.Run("ShouldRunMultipleContainers", func(t *testing.T) {

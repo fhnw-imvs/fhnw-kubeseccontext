@@ -35,7 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
@@ -74,7 +74,7 @@ var titleCase = cases.Title(language.English)
 // 7. If the baseline is not recorded yet, we start the baseline recording
 // 8. If the baselnie is recorded, we start recording the different checks
 func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx).WithName("Reconcile")
+	logger := logf.FromContext(ctx).WithName("Reconcile")
 
 	// Get Resource
 	// Fetch the WorkloadHardeningCheck instance
@@ -119,21 +119,21 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonAnalysisRunning,
-			Message: "Check runs are beeing analyzed",
+			Message: "Check runs are being analyzed",
 		})
 
 		logger.Info("All checks are finished, analyzing results")
-		err = checkManager.SetCondition(ctx, metav1.Condition{
+		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeAnalysis,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonAnalysisRunning,
-			Message: "Check runs are beeing analyzed",
+			Message: "Check runs are being analyzed",
 		})
 
 		err = checkManager.AnalyzeCheckRuns(ctx)
 		if err != nil {
 			logger.Error(err, "Failed to analyze check runs")
-			err = checkManager.SetCondition(ctx, metav1.Condition{
+			checkManager.SetCondition(ctx, metav1.Condition{
 				Type:    checksv1alpha1.ConditionTypeAnalysis,
 				Status:  metav1.ConditionFalse,
 				Reason:  checksv1alpha1.ReasonAnalysisFailed,
@@ -144,7 +144,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 		checkManager.SetRecommendation(ctx)
 
-		err = checkManager.SetCondition(ctx, metav1.Condition{
+		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeAnalysis,
 			Status:  metav1.ConditionTrue,
 			Reason:  checksv1alpha1.ReasonAnalysisFinished,
@@ -410,7 +410,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 // Called if the WorkloadHardeningCheck instance is removed or deleted and we need to clean up the resources
 func (r *WorkloadHardeningCheckReconciler) cleanupReconcileLoop(ctx context.Context, sourceNamespace string) (ctrl.Result, error) {
-	log := log.FromContext(ctx).WithName("cleanupReconcileLoop")
+	log := logf.FromContext(ctx).WithName("cleanupReconcileLoop")
 
 	// If the custom resource is not found then it usually means that it was deleted or not created
 	log.Info("WorkloadHardeningCheck deleted, cleaning up resources")
@@ -452,7 +452,7 @@ func (r *WorkloadHardeningCheckReconciler) cleanupReconcileLoop(ctx context.Cont
 }
 
 func (r *WorkloadHardeningCheckReconciler) deleteNamespace(ctx context.Context, namespaceName string) error {
-	log := log.FromContext(ctx).WithValues("namespace", namespaceName)
+	log := logf.FromContext(ctx).WithValues("namespace", namespaceName)
 	targetNs := &corev1.Namespace{}
 	err := r.Get(ctx, client.ObjectKey{Name: namespaceName}, targetNs)
 	if err != nil {
@@ -476,7 +476,7 @@ func (r *WorkloadHardeningCheckReconciler) deleteNamespace(ctx context.Context, 
 	for _, clusterRoleBinding := range clusterRoleBindingList.Items {
 		if clusterRoleBinding.Labels["orakel.fhnw.ch/target-namespace"] == namespaceName {
 			log.Info("Deleting ClusterRoleBinding", "name", clusterRoleBinding.Name)
-			err = r.Delete(ctx, &clusterRoleBinding)
+			r.Delete(ctx, &clusterRoleBinding)
 		}
 	}
 

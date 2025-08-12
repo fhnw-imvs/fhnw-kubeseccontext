@@ -63,11 +63,11 @@ func (v ValkeyClient) deleteEntry(ctx context.Context, key string) error {
 	return nil
 }
 
-func (v ValkeyClient) StoreRecording(ctx context.Context, suffix string, recording *recording.WorkloadRecording) error {
-	key := "recording:" + suffix + ":" + recording.Type
+func (v ValkeyClient) StoreRecording(ctx context.Context, suffix string, workloadRecording *recording.WorkloadRecording) error {
+	key := "recording:" + suffix + ":" + workloadRecording.Type
 
 	// Store the metrics in Valkey
-	jsonB, err := json.Marshal(recording)
+	jsonB, err := json.Marshal(workloadRecording)
 	if err != nil {
 		return err
 	}
@@ -87,12 +87,12 @@ func (v ValkeyClient) GetRecording(ctx context.Context, keySuffix string) (*reco
 		return nil, nil // No recording found for the given key
 	}
 
-	var recording recording.WorkloadRecording
-	err = json.Unmarshal([]byte(value), &recording)
+	var workloadRecording recording.WorkloadRecording
+	err = json.Unmarshal([]byte(value), &workloadRecording)
 	if err != nil {
 		return nil, err
 	}
-	return &recording, nil
+	return &workloadRecording, nil
 
 }
 

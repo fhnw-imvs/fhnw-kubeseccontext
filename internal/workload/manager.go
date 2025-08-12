@@ -3,7 +3,6 @@ package workload
 import (
 	"context"
 	"fmt"
-	"regexp"
 	"strings"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"golang.org/x/text/language"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
-	v1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,7 +18,7 @@ import (
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
@@ -33,10 +31,7 @@ import (
 
 var (
 	// Required to convert "user" to "User", strings.ToTitle converts each rune to title case not just the first one
-	titleCase          = cases.Title(language.English)
-	drainTemplateRegex = regexp.MustCompile(`id=\{\d+\}\s+:\s+size=\{(?P<size>\d+)\}\s+:\s+(?P<template>.*)$`)
-	sizeIndex          = drainTemplateRegex.SubexpIndex("size")
-	templateIndex      = drainTemplateRegex.SubexpIndex("template")
+	titleCase = cases.Title(language.English)
 )
 
 type WorkloadCheckManager struct {
@@ -53,7 +48,7 @@ type WorkloadCheckManager struct {
 
 func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyClient, workloadHardeningCheck *checksv1alpha1.WorkloadHardeningCheck) *WorkloadCheckManager {
 
-	log := log.FromContext(ctx).WithName("WorkloadManager")
+	log := logf.FromContext(ctx).WithName("WorkloadManager")
 	scheme := runtime.NewScheme()
 
 	clientgoscheme.AddToScheme(scheme)
@@ -79,11 +74,13 @@ func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyCli
 		allChecks:              checks.GetAllChecks(),
 	}
 
+	checkManager.refreshWorkloadHardeningCheck()
+
 	// Let's just set the status as Unknown when no status is available
 	if len(workloadHardeningCheck.Status.Conditions) == 0 {
 
 		// Set condition finished to false, so we can track the progress of the reconciliation
-		err = checkManager.SetCondition(ctx, metav1.Condition{
+		checkManager.SetCondition(ctx, metav1.Condition{
 			Type:    checksv1alpha1.ConditionTypeFinished,
 			Status:  metav1.ConditionFalse,
 			Reason:  checksv1alpha1.ReasonPreparationVerifying,
@@ -172,7 +169,7 @@ func (m *WorkloadCheckManager) ScaleWorkloadUnderTest(ctx context.Context, names
 	return err
 }
 
-func (m *WorkloadCheckManager) GetPodSpecTemplate(ctx context.Context, namespace string) (*v1.PodSpec, error) {
+func (m *WorkloadCheckManager) GetPodSpecTemplate(ctx context.Context, namespace string) (*corev1.PodSpec, error) {
 
 	workloadUnderTestPtr, err := m.GetWorkloadUnderTest(ctx, namespace)
 	if err != nil {
@@ -180,7 +177,7 @@ func (m *WorkloadCheckManager) GetPodSpecTemplate(ctx context.Context, namespace
 		return nil, fmt.Errorf("failed to get workload under test: %w", err)
 	}
 
-	var podSpecTemplate *v1.PodSpec
+	var podSpecTemplate *corev1.PodSpec
 	switch v := (*workloadUnderTestPtr).(type) {
 	case *appsv1.Deployment:
 		podSpecTemplate = &v.Spec.Template.Spec
@@ -240,7 +237,7 @@ func (m *WorkloadCheckManager) VerifyRunning(ctx context.Context, namespace stri
 		return false, fmt.Errorf("failed to get workload under test: %w", err)
 	}
 
-	return VerifyReadiness(*workloadUnderTestPtr, m.Client)
+	return VerifyReadiness(workloadUnderTestPtr, m.Client)
 }
 
 func (m *WorkloadCheckManager) GetLabelSelector(ctx context.Context) (labels.Selector, error) {
@@ -429,8 +426,8 @@ func (m *WorkloadCheckManager) SetRecommendation(ctx context.Context) error {
 		return fmt.Errorf("failed to get workload under test: %w", err)
 	}
 
-	podSecurityContext := &v1.PodSecurityContext{}
-	containerSecurityContext := &v1.SecurityContext{}
+	podSecurityContext := &corev1.PodSecurityContext{}
+	containerSecurityContext := &corev1.SecurityContext{}
 
 	// Get security context already set in the original manifest
 	if podSpecTemplate != nil && podSpecTemplate.SecurityContext != nil {
@@ -527,78 +524,4 @@ func (m *WorkloadCheckManager) GetCheckDuration() time.Duration {
 	}
 
 	return duration
-}
-
-// VerifyReadiness checks if the workload under test is ready by verifying the pods are running and their containers are ready.
-func VerifyReadiness(workloadUnderTest client.Object, c client.Client) (bool, error) {
-	pods, err := GetPodsForWorkload(context.Background(), c, workloadUnderTest)
-	if err != nil {
-		return false, fmt.Errorf("failed to get pods for workload: %w", err)
-	}
-	if len(pods) == 0 {
-		return false, fmt.Errorf("no pods found for workload %s/%s", workloadUnderTest.GetNamespace(), workloadUnderTest.GetName())
-	}
-
-	for _, pod := range pods {
-		if pod.Status.Phase != corev1.PodRunning {
-			return false, fmt.Errorf("pod %s/%s is not running", pod.Namespace, pod.Name)
-		}
-		if len(pod.Status.ContainerStatuses) == 0 {
-			return false, fmt.Errorf("pod %s/%s has no container statuses", pod.Namespace, pod.Name)
-		}
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if containerStatus.State.Waiting != nil {
-				return false, fmt.Errorf("pod %s/%s container %s is waiting: %s", pod.Namespace, pod.Name, containerStatus.Name, containerStatus.State.Waiting.Reason)
-			}
-			if containerStatus.State.Terminated != nil {
-				return false, fmt.Errorf("pod %s/%s container %s is terminated: %s", pod.Namespace, pod.Name, containerStatus.Name, containerStatus.State.Terminated.Reason)
-			}
-			if !containerStatus.Ready {
-				return false, fmt.Errorf("pod %s/%s container %s is not ready", pod.Namespace, pod.Name, containerStatus.Name)
-			}
-		}
-	}
-	return true, nil
-}
-
-func VerifyUpdated(workloadUnderTest client.Object) (bool, error) {
-	switch v := workloadUnderTest.(type) {
-	case *appsv1.Deployment:
-		return *v.Spec.Replicas == v.Status.UpdatedReplicas, nil
-	case *appsv1.StatefulSet:
-		return *v.Spec.Replicas == v.Status.CurrentReplicas, nil
-	case *appsv1.DaemonSet:
-		return v.Status.DesiredNumberScheduled == v.Status.UpdatedNumberScheduled, nil
-	}
-
-	return false, fmt.Errorf("kind of workloadUnderTest not supported")
-}
-
-func GetPodsForWorkload(ctx context.Context, c client.Client, workloadUnderTest client.Object) ([]corev1.Pod, error) {
-	var labelSelector *metav1.LabelSelector
-	switch v := workloadUnderTest.(type) {
-	case *appsv1.Deployment:
-		labelSelector = v.Spec.Selector
-	case *appsv1.StatefulSet:
-		labelSelector = v.Spec.Selector
-	case *appsv1.DaemonSet:
-		labelSelector = v.Spec.Selector
-	}
-
-	// Get the label selector for the workload
-	podLabelSelector, err := metav1.LabelSelectorAsSelector(labelSelector)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get label selector: %w", err)
-	}
-
-	podList := &corev1.PodList{}
-	err = c.List(ctx, podList, &client.ListOptions{
-		Namespace:     workloadUnderTest.GetNamespace(),
-		LabelSelector: podLabelSelector,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list pods: %w", err)
-	}
-
-	return podList.Items, nil
 }

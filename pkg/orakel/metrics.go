@@ -108,14 +108,14 @@ func NewMetricsOrakel() *MetricsOrakel {
 	}
 }
 
-func (mo *MetricsOrakel) LoadBaseline(recording *recording.WorkloadRecording) {
+func (mo *MetricsOrakel) LoadBaseline(workloadRecording *recording.WorkloadRecording) {
 	// Load baseline metrics from the recording
 	if mo.BaselineMetricsSummary == nil {
-		mo.BaselineMetricsSummary = NewCheckMetricsSummary(recording.RecordedMetrics)
+		mo.BaselineMetricsSummary = NewCheckMetricsSummary(workloadRecording.RecordedMetrics)
 		return
 	}
 
-	for _, containerMetrics := range recording.RecordedMetrics {
+	for _, containerMetrics := range workloadRecording.RecordedMetrics {
 		mo.BaselineMetricsSummary.updateValues(containerMetrics.CPU, containerMetrics.Memory)
 	}
 
@@ -125,9 +125,9 @@ func (mo *MetricsOrakel) LoadBaseline(recording *recording.WorkloadRecording) {
 
 }
 
-func (mo *MetricsOrakel) AnalyzeTarget(recording *recording.WorkloadRecording) (cpuDeviation bool, memoryDeviation bool) {
+func (mo *MetricsOrakel) AnalyzeTarget(workloadRecording *recording.WorkloadRecording) (cpuDeviation bool, memoryDeviation bool) {
 	// This is called after all baseline metrics have been loaded, so we calculate the summary statistics
-	targetMetricsSummary := NewCheckMetricsSummary(recording.RecordedMetrics)
+	targetMetricsSummary := NewCheckMetricsSummary(workloadRecording.RecordedMetrics)
 
 	cpuUpperThreshold := mo.BaselineMetricsSummary.CpuSummary.Avg * (1 + mo.BaselineMetricsSummary.CpuSummary.StdDev)
 	cpuLowerThreshold := mo.BaselineMetricsSummary.CpuSummary.Avg * (1 - mo.BaselineMetricsSummary.CpuSummary.StdDev)

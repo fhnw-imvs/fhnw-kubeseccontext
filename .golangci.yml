@@ -36,6 +36,10 @@ linters:
           - dupl
           - lll
         path: internal/*
+      - linters:
+          - dupl
+          - lll
+        path: pkg/*
     paths:
       - third_party$
       - builtin$
@@ -50,3 +54,7 @@ formatters:
       - third_party$
       - builtin$
       - examples$
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/fhnw-imvs/fhnw-kubeseccontext

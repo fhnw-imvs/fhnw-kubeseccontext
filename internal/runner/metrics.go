@@ -19,11 +19,10 @@ import (
 	"k8s.io/client-go/rest"
 	statsapi "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 var podMetrics = map[types.UID]statsapi.PodStats{}
-var knownPods = []types.UID{}
 var podMetricsLastUpdate = time.Time{}
 
 var refreshMutex sync.Mutex
@@ -57,7 +56,7 @@ func GetPodResourceUsage(pod corev1.Pod) (*statsapi.PodStats, error) {
 		return nil, &PodError{Pod: pod, message: "pod metrics not initialized"}
 	}
 
-	if podStat, ok := podMetrics[pod.ObjectMeta.UID]; ok {
+	if podStat, ok := podMetrics[pod.UID]; ok {
 		return &podStat, nil
 	} else {
 		return nil, &PodError{Pod: pod, message: "pod not found in metrics"}
@@ -77,8 +76,6 @@ func RefreshPodMetrics(ctx context.Context) error {
 		return err
 	}
 
-	knownPods = []types.UID{}
-
 	var wg sync.WaitGroup
 	wg.Add(len(nodes.Items))
 
@@ -97,18 +94,15 @@ func RefreshPodMetrics(ctx context.Context) error {
 	close(resultsChannel)
 
 	newPodMetrics := map[types.UID]statsapi.PodStats{}
-	newKnownPods := []types.UID{}
 
 	for result := range resultsChannel {
 		for uid, podStat := range result {
 			newPodMetrics[uid] = podStat
-			newKnownPods = append(newKnownPods, uid)
 		}
 	}
 
 	podMetricsLastUpdate = time.Now()
 	podMetrics = newPodMetrics
-	knownPods = newKnownPods
 
 	return nil
 
@@ -139,11 +133,11 @@ func RefreshPodMetricsPerNode(ctx context.Context, nodeName string, resultsChann
 }
 
 func getNodeMetrics(ctx context.Context, nodeName string) (*statsapi.Summary, error) {
-	log := log.FromContext(ctx).WithName("metrics")
-	config := config.GetConfigOrDie()
+	log := logf.FromContext(ctx).WithName("metrics")
+	clientConfig := config.GetConfigOrDie()
 
-	client, _ := rest.HTTPClientFor(config)
-	apiHost := config.Host
+	client, _ := rest.HTTPClientFor(clientConfig)
+	apiHost := clientConfig.Host
 
 	req, err := client.Get(apiHost + "/api/v1/nodes/" + nodeName + "/proxy/stats/summary")
 	if err != nil {
@@ -203,7 +197,7 @@ func GetLogs(ctx context.Context, pod *corev1.Pod, containerName string, previou
 // Records cpu and memory usage metrics for a pod
 // The metrics are collected at pod level, and not at container level
 func RecordMetrics(ctx context.Context, pod *corev1.Pod, duration, interval int) (*recording.RecordedMetrics, error) {
-	log := log.FromContext(ctx).WithName("metrics").WithValues(
+	log := logf.FromContext(ctx).WithName("metrics").WithValues(
 		"podName", pod.Name,
 		"podUID", pod.UID,
 		"targetNamespace", pod.Namespace,

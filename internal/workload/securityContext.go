@@ -10,11 +10,11 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 func mergePodSecurityContexts(ctx context.Context, base, extends *corev1.PodSecurityContext) *corev1.PodSecurityContext {
-	log := log.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
 	if base == nil {
 		log.Info("Base security context is nil, using override")
@@ -64,7 +64,7 @@ func mergePodSecurityContexts(ctx context.Context, base, extends *corev1.PodSecu
 }
 
 func mergeContainerSecurityContexts(ctx context.Context, base, extends *corev1.SecurityContext) *corev1.SecurityContext {
-	log := log.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
 	if base == nil {
 		log.Info("Base security context is nil, using override")
@@ -177,6 +177,7 @@ func applySecurityContext(ctx context.Context, podSpec *corev1.PodSpec, containe
 }
 
 func ApplySecurityContext(ctx context.Context, workloadUnderTest *client.Object, containerSecurityContext *corev1.SecurityContext, podSecurityContext *corev1.PodSecurityContext) error {
+
 	var podSpecTemplate *corev1.PodSpec
 	switch v := (*workloadUnderTest).(type) {
 	case *appsv1.Deployment:
@@ -212,5 +213,5 @@ func ApplySecurityContext(ctx context.Context, workloadUnderTest *client.Object,
 		return nil
 	}
 
-	return fmt.Errorf("kind of workloadUnderTest not supported")
+	return fmt.Errorf("supported workload kind, with empty podSpecTemplate")
 }

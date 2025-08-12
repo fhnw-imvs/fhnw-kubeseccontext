@@ -18,7 +18,7 @@ import (
 	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
-	"sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 var resourcesToSkip = []string{
@@ -38,7 +38,7 @@ var resourcesToSkip = []string{
 }
 
 func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffix string) error {
-	log := log.FromContext(ctx).WithName("runner").WithValues("targetNamespace", targetNamespace, "suffix", suffix)
+	log := logf.FromContext(ctx).WithName("runner").WithValues("targetNamespace", targetNamespace, "suffix", suffix)
 
 	// check if targetNamespace already exists
 	cl, err := client.New(config.GetConfigOrDie(), client.Options{})
@@ -232,7 +232,7 @@ func GetTopLevelResources(ctx context.Context, namespace string) ([]*unstructure
 // First we need to use a discovery client to get all namespaced resource types
 // Afterwards we can use a dynamic client, to load resources from any type into Unstructred objects
 func getAllResources(ctx context.Context, namespace string) (map[string]*unstructured.UnstructuredList, error) {
-	log := log.FromContext(ctx).WithName("runner")
+	log := logf.FromContext(ctx).WithName("runner")
 
 	dynamicClient, err := dynamic.NewForConfig(config.GetConfigOrDie())
 	if err != nil {
