@@ -95,7 +95,7 @@ help: ## Display this help.
 ##@ Development
 
 .PHONY: manifests
-manifests: controller-gen ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
+manifests: controller-gen helm-copy-crds ## Generate WebhookConfiguration, ClusterRole and CustomResourceDefinition objects.
 	$(CONTROLLER_GEN) rbac:roleName=manager-role crd webhook paths="./..." output:crd:artifacts:config=config/crd/bases
 
 .PHONY: generate
@@ -113,11 +113,6 @@ vet: ## Run go vet against code.
 .PHONY: test
 test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
-
-.PHONY: proxy-valkey
-proxy-valkey: ## Proxy the valkey server to localhost, to start the controller locally
-	@echo "Forwarding valkey server to localhost"
-	kubectl -n orakel-of-funk-system port-forward svc/valkey 6379:6379 &
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
 .PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
@@ -334,3 +329,22 @@ catalog-build: opm ## Build a catalog image.
 .PHONY: catalog-push
 catalog-push: ## Push a catalog image.
 	$(MAKE) docker-push IMG=$(CATALOG_IMG)
+
+
+##@ Custom Targets
+.PHONY: proxy-valkey
+proxy-valkey: ## Proxy the valkey server to localhost, to start the controller locally
+	@echo "Forwarding valkey server to localhost"
+	kubectl -n orakel-of-funk-system port-forward svc/valkey 6379:6379 &
+
+.PHONY: helm-copy-crds
+helm-copy-crds: ## Copy CRDs to helm charts
+	@echo "Updating CRDs in Helm chart"
+	mkdir -p charts/orakel-of-funk/crds
+	cp config/crd/bases/checks.funk.fhnw.ch_namespacehardeningchecks.yaml deploy/charts/orakel-of-funk/crds/namespacehardeningchecks.checks.funk.fhnw.ch.yaml
+	cp config/crd/bases/checks.funk.fhnw.ch_workloadhardeningchecks.yaml deploy/charts/orakel-of-funk/crds/workloadhardeningcheck.checks.funk.fhnw.ch.yaml
+
+.PHONY: helm-lint
+helm-lint: ## Lint Helm chart
+	@echo "Linting Helm chart"
+	helm lint deploy/charts/orakel-of-funk/

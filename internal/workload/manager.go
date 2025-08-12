@@ -333,35 +333,42 @@ func (m *WorkloadCheckManager) AnalyzeCheckRuns(ctx context.Context) error {
 			}
 
 			anomalies, _ := drainMiner.AnalyzeTarget(logs)
-			if len(anomalies) > 0 && len(anomalies) <= 5 {
+			if len(anomalies) > 0 {
 				m.logger.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
-				checkSuccessful = false
-				if checkRun.LogAnomalies == nil {
-					checkRun.LogAnomalies = make(map[string][]string)
-				}
 
-				checkRun.LogAnomalies[containerName] = anomalies
-
-			} else if len(anomalies) > 5 {
-				m.logger.Info("Anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName, "anomalyCount", len(anomalies))
-				checkSuccessful = false
-				if checkRun.LogAnomalies == nil {
-					checkRun.LogAnomalies = make(map[string][]string)
-				}
-
-				anomalyMiner := orakel.NewLogOrakel()
-				anomalyMiner.LoadBaseline(logs)
-
-				anomalyTemplates := anomalyMiner.GetTemplates()
-
-				if len(anomalyTemplates) > 5 {
-					m.logger.V(2).Info("Trimming anomaly templates to last 5", "checkRun", checkRun.Name, "containerName", containerName)
-					// First 5 anomalies are the most significant ones
-					checkRun.LogAnomalies[containerName] = anomalyTemplates[:5]
+				if checkRun.FailureReason == "" {
+					// Set the failure reason only if it is not already set
+					checkRun.FailureReason = fmt.Sprintf("Anomalies found in logs of container %s", containerName)
 				} else {
-					checkRun.LogAnomalies[containerName] = anomalyTemplates
+					// Append to the existing failure reason
+					checkRun.FailureReason += fmt.Sprintf(", Anomalies found in logs of container %s", containerName)
+				}
+				checkSuccessful = false
+
+				if checkRun.LogAnomalies == nil {
+					checkRun.LogAnomalies = make(map[string][]string)
 				}
 
+				if len(anomalies) <= 10 {
+
+					checkRun.LogAnomalies[containerName] = anomalies
+
+				} else if len(anomalies) > 10 {
+
+					anomalyMiner := orakel.NewLogOrakel()
+					anomalyMiner.LoadBaseline(logs)
+
+					anomalyTemplates := anomalyMiner.GetTemplates()
+
+					if len(anomalyTemplates) > 5 {
+						m.logger.V(2).Info("Trimming anomaly templates to last 5", "checkRun", checkRun.Name, "containerName", containerName)
+						// First 5 anomalies are the most significant ones
+						checkRun.LogAnomalies[containerName] = anomalyTemplates[:5]
+					} else {
+						checkRun.LogAnomalies[containerName] = anomalyTemplates
+					}
+
+				}
 			} else {
 				m.logger.Info("No anomalies found in check run", "checkRun", checkRun.Name, "containerName", containerName)
 			}

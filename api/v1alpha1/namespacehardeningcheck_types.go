@@ -25,12 +25,8 @@ import (
 
 // NamespaceHardeningCheckSpec defines the desired state of NamespaceHardeningCheck
 type NamespaceHardeningCheckSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
 
-	// foo is an example field of NamespaceHardeningCheck. Edit namespacehardeningcheck_types.go to remove/update
+	// TargetNamespace references the namespace where all workloads should be hardened.
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	// +kubebuilder:validation:MinLength=1
@@ -58,14 +54,12 @@ type NamespaceHardeningCheckSpec struct {
 
 // NamespaceHardeningCheckStatus defines the observed state of NamespaceHardeningCheck.
 type NamespaceHardeningCheckStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
 
 	// Conditions store the status conditions of the WorkloadHardeningCheck instances
 	// +operator-sdk:csv:customresourcedefinitions:type=status
 	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 
-	// Recommendation contains the recommended security contexts for the workload under test.
+	// Recommendation contains the recommended security contexts for all workloads in the target namespace.
 	Recommendations map[string]*Recommendation `json:"recommendations,omitempty"`
 }
 

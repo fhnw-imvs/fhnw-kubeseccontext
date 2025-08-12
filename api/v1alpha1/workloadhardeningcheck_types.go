@@ -57,15 +57,19 @@ type WorkloadHardeningCheckSpec struct {
 // TargetReference defines a reference to a Kubernetes workload.
 type TargetReference struct {
 	// API version of the workload.
-	// +kubebuilder:validation:Required
+	// +kubebuilder:default="apps/v1"
 	APIVersion string `json:"apiVersion"`
 
 	// Kind of the workload (e.g., Deployment, StatefulSet).
+	// +kubebuilder:validation:Enum=Deployment;StatefulSet;DaemonSet
 	// +kubebuilder:validation:Required
 	Kind string `json:"kind"`
 
 	// Name of the workload.
 	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`
 	Name string `json:"name"`
 }
 
@@ -251,9 +255,9 @@ const (
 type WorkloadHardeningCheckStatus struct {
 
 	// Represents the observations of a WorkloadHardeningCheck's current state.
-	// WorkloadHardeningCheck.status.conditions.type are: "Preparation", "Baseline", "Check"
+	// WorkloadHardeningCheck.status.conditions.type are the constants defined above
 	// WorkloadHardeningCheck.status.conditions.status are one of True, False, Unknown.
-	// WorkloadHardeningCheck.status.conditions.reason the value should be a CamelCase string and producers of specific
+	// WorkloadHardeningCheck.status.conditions.reason should be one of the constants defined above.
 	// condition types may define expected values and meanings for this field, and whether the values
 	// are considered a guaranteed API.
 	// WorkloadHardeningCheck.status.conditions.Message is a human readable message indicating details about the transition.
@@ -281,17 +285,27 @@ type WorkloadHardeningCheckStatus struct {
 type CheckRun struct {
 	// Name of the check run, e.g., "Baseline", "User", "ReadOnlyRootFilesystem", etc.
 	Name string `json:"name,omitempty"`
-	// Boolean flag indicating whether the check run was successful or not. A check is considered successful if the workload started and metrics and logs were recorded.
+	// Boolean flag indicating whether the check run was successful or not.
+	// A recording is considered successful if metrics and logs were recorded.
 	RecordingSuccessfull *bool `json:"recordingSuccessfull,omitempty"`
-	// Boolean flag indicating whether the check run was successful or not. A check is considered successful if the workload started and metrics and logs were recorded.
+	// Boolean flag indicating whether the check run was successful or not.
+	// A check is considered successful if the workload started and metrics and logs were analyzed and didn't show any anomalies cparing to the baseline.
 	CheckSuccessfull *bool `json:"checkSuccessfull,omitempty"`
+
 	// SecurityContext which was applied for this check run.
 	SecurityContext *SecurityContextDefaults `json:"securityContext,omitempty"`
+
 	// FailureReason provides a reason for the failure of the check run, if applicable.
-	FailureReason   string              `json:"failureReason,omitempty"`
-	LogAnomalies    map[string][]string `json:"anomalies,omitempty"`
-	CpuDeviation    *bool               `json:"cpuDeviation,omitempty"`
-	MemoryDeviation *bool               `json:"memoryDeviation,omitempty"`
+	FailureReason string `json:"failureReason,omitempty"`
+
+	// Contains log anomlies detected during the check run.
+	// The key is the container name, and the value is a list of log messages that indicate anomalies.
+	// If there are too many anomalies, they are passed through the Drain alogorithm, and only the most significant templates are shown.
+	LogAnomalies map[string][]string `json:"anomalies,omitempty"`
+
+	// Indicates whether the check run deviated from the baseline in terms of CPU and memory usage.
+	CpuDeviation    *bool `json:"cpuDeviation,omitempty"`
+	MemoryDeviation *bool `json:"memoryDeviation,omitempty"`
 }
 
 // Recommendation provides the recommended security contexts for the workload under test.

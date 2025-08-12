@@ -154,8 +154,8 @@ spec:
                 pattern: ^[a-z0-9]{0,5}$
                 type: string
               targetNamespace:
-                description: foo is an example field of NamespaceHardeningCheck. Edit
-                  namespacehardeningcheck_types.go to remove/update
+                description: TargetNamespace references the namespace where all workloads
+                  should be hardened.
                 maxLength: 63
                 minLength: 1
                 pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
@@ -657,7 +657,7 @@ spec:
                       type: object
                   type: object
                 description: Recommendation contains the recommended security contexts
-                  for the workload under test.
+                  for all workloads in the target namespace.
                 type: object
             type: object
         required:

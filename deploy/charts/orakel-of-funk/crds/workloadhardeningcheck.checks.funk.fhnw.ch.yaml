@@ -157,13 +157,21 @@ spec:
                 description: TargetRef specifies the workload to be hardened.
                 properties:
                   apiVersion:
+                    default: apps/v1
                     description: API version of the workload.
                     type: string
                   kind:
                     description: Kind of the workload (e.g., Deployment, StatefulSet).
+                    enum:
+                    - Deployment
+                    - StatefulSet
+                    - DaemonSet
                     type: string
                   name:
                     description: Name of the workload.
+                    maxLength: 253
+                    minLength: 1
+                    pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                     type: string
                 required:
                 - apiVersion
@@ -189,13 +197,19 @@ spec:
                         items:
                           type: string
                         type: array
+                      description: |-
+                        Contains log anomlies detected during the check run.
+                        The key is the container name, and the value is a list of log messages that indicate anomalies.
+                        If there are too many anomalies, they are passed through the Drain alogorithm, and only the most significant templates are shown.
                       type: object
                     checkSuccessfull:
-                      description: Boolean flag indicating whether the check run was
-                        successful or not. A check is considered successful if the
-                        workload started and metrics and logs were recorded.
+                      description: |-
+                        Boolean flag indicating whether the check run was successful or not.
+                        A check is considered successful if the workload started and metrics and logs were analyzed and didn't show any anomalies cparing to the baseline.
                       type: boolean
                     cpuDeviation:
+                      description: Indicates whether the check run deviated from the
+                        baseline in terms of CPU and memory usage.
                       type: boolean
                     failureReason:
                       description: FailureReason provides a reason for the failure
@@ -208,9 +222,9 @@ spec:
                         "ReadOnlyRootFilesystem", etc.
                       type: string
                     recordingSuccessfull:
-                      description: Boolean flag indicating whether the check run was
-                        successful or not. A check is considered successful if the
-                        workload started and metrics and logs were recorded.
+                      description: |-
+                        Boolean flag indicating whether the check run was successful or not.
+                        A recording is considered successful if metrics and logs were recorded.
                       type: boolean
                     securityContext:
                       description: SecurityContext which was applied for this check
@@ -305,13 +319,19 @@ spec:
                         items:
                           type: string
                         type: array
+                      description: |-
+                        Contains log anomlies detected during the check run.
+                        The key is the container name, and the value is a list of log messages that indicate anomalies.
+                        If there are too many anomalies, they are passed through the Drain alogorithm, and only the most significant templates are shown.
                       type: object
                     checkSuccessfull:
-                      description: Boolean flag indicating whether the check run was
-                        successful or not. A check is considered successful if the
-                        workload started and metrics and logs were recorded.
+                      description: |-
+                        Boolean flag indicating whether the check run was successful or not.
+                        A check is considered successful if the workload started and metrics and logs were analyzed and didn't show any anomalies cparing to the baseline.
                       type: boolean
                     cpuDeviation:
+                      description: Indicates whether the check run deviated from the
+                        baseline in terms of CPU and memory usage.
                       type: boolean
                     failureReason:
                       description: FailureReason provides a reason for the failure
@@ -324,9 +344,9 @@ spec:
                         "ReadOnlyRootFilesystem", etc.
                       type: string
                     recordingSuccessfull:
-                      description: Boolean flag indicating whether the check run was
-                        successful or not. A check is considered successful if the
-                        workload started and metrics and logs were recorded.
+                      description: |-
+                        Boolean flag indicating whether the check run was successful or not.
+                        A recording is considered successful if metrics and logs were recorded.
                       type: boolean
                     securityContext:
                       description: SecurityContext which was applied for this check
@@ -481,13 +501,19 @@ spec:
                       items:
                         type: string
                       type: array
+                    description: |-
+                      Contains log anomlies detected during the check run.
+                      The key is the container name, and the value is a list of log messages that indicate anomalies.
+                      If there are too many anomalies, they are passed through the Drain alogorithm, and only the most significant templates are shown.
                     type: object
                   checkSuccessfull:
-                    description: Boolean flag indicating whether the check run was
-                      successful or not. A check is considered successful if the workload
-                      started and metrics and logs were recorded.
+                    description: |-
+                      Boolean flag indicating whether the check run was successful or not.
+                      A check is considered successful if the workload started and metrics and logs were analyzed and didn't show any anomalies cparing to the baseline.
                     type: boolean
                   cpuDeviation:
+                    description: Indicates whether the check run deviated from the
+                      baseline in terms of CPU and memory usage.
                     type: boolean
                   failureReason:
                     description: FailureReason provides a reason for the failure of
@@ -500,9 +526,9 @@ spec:
                       "ReadOnlyRootFilesystem", etc.
                     type: string
                   recordingSuccessfull:
-                    description: Boolean flag indicating whether the check run was
-                      successful or not. A check is considered successful if the workload
-                      started and metrics and logs were recorded.
+                    description: |-
+                      Boolean flag indicating whether the check run was successful or not.
+                      A recording is considered successful if metrics and logs were recorded.
                     type: boolean
                   securityContext:
                     description: SecurityContext which was applied for this check
