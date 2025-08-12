@@ -75,20 +75,6 @@ func NewWorkloadCheckManager(ctx context.Context, valKeyClient *valkey.ValkeyCli
 		allChecks:              checks.GetAllChecks(),
 	}
 
-	checkManager.refreshWorkloadHardeningCheck()
-
-	// Let's just set the status as Unknown when no status is available
-	if len(workloadHardeningCheck.Status.Conditions) == 0 {
-
-		// Set condition finished to false, so we can track the progress of the reconciliation
-		checkManager.SetCondition(ctx, metav1.Condition{
-			Type:    checksv1alpha1.ConditionTypeFinished,
-			Status:  metav1.ConditionFalse,
-			Reason:  checksv1alpha1.ReasonPreparationVerifying,
-			Message: "Reconciliation started",
-		})
-	}
-
 	return checkManager
 
 }

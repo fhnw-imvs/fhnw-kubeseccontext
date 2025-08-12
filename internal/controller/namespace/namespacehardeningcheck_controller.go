@@ -25,7 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/namespace"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
 )
 
@@ -279,7 +279,9 @@ func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Cont
 		finalCheckNamespace = finalCheckNamespace[:63] // Ensure the namespace name is within the 63 character limit
 	}
 
-	err := runner.CloneNamespace(ctx, namespaceHardening.Spec.TargetNamespace, finalCheckNamespace, namespaceHardening.Spec.Suffix)
+	namespaceCloner := namespace.NewNamespaceCloner(r.Client)
+
+	err := namespaceCloner.Clone(ctx, namespaceHardening.Spec.TargetNamespace, finalCheckNamespace, namespaceHardening.Spec.Suffix)
 	if err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			logger.Info("Final check namespace already exists, using it", "namespace", finalCheckNamespace)
@@ -297,11 +299,7 @@ func (r *NamespaceHardeningCheckReconciler) createFinalCheckRun(ctx context.Cont
 	ctrl.SetControllerReference(namespaceHardening, finalCheckNamespaceObj, r.Scheme)
 
 	logger.Info("Cloned namespace for final check", "sourceNamespace", namespaceHardening.Spec.TargetNamespace, "finalCheckNamespace", finalCheckNamespace)
-	topLevelResources, err := runner.GetTopLevelResources(ctx, finalCheckNamespace)
-	if err != nil {
-		logger.Error(err, "Failed to get top-level resources in final check namespace", "namespace", finalCheckNamespace)
-		return false, err
-	}
+	topLevelResources := namespace.GetTopLevelResources(ctx, finalCheckNamespace)
 
 	// Should be caught way earlier, but just in case
 	if len(topLevelResources) == 0 {
@@ -469,11 +467,7 @@ func (r *NamespaceHardeningCheckReconciler) getTopLevelResourcesToCheck(ctx cont
 	logger := logf.FromContext(ctx).WithName("getTopLevelResourcesToCheck")
 
 	// Fetch all top-level resources in the target namespace
-	allTopLevelResources, err := runner.GetTopLevelResources(ctx, namespaceHardeningCheck.Spec.TargetNamespace)
-	if err != nil {
-		logger.Error(err, "Failed to get top-level resources in target namespace", "namespace", namespaceHardeningCheck.Spec.TargetNamespace)
-		return nil, err
-	}
+	allTopLevelResources := namespace.GetTopLevelResources(ctx, namespaceHardeningCheck.Spec.TargetNamespace)
 
 	if len(allTopLevelResources) == 0 {
 		logger.Info("No top-level resources found in target namespace", "namespace", namespaceHardeningCheck.Spec.TargetNamespace)

@@ -1,23 +1,16 @@
-package runner
+package namespace
 
 import (
 	"context"
 	"fmt"
-	"slices"
-	"strings"
 
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	utilrand "k8s.io/apimachinery/pkg/util/rand"
-	"k8s.io/client-go/discovery"
-	"k8s.io/client-go/dynamic"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
@@ -37,16 +30,23 @@ var resourcesToSkip = []string{
 	"namespacehardeningchecks",
 }
 
-func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffix string) error {
-	log := logf.FromContext(ctx).WithName("runner").WithValues("targetNamespace", targetNamespace, "suffix", suffix)
+type NamespaceCloner struct {
+	client.Client
+	logger logr.Logger
+}
 
-	// check if targetNamespace already exists
-	cl, err := client.New(config.GetConfigOrDie(), client.Options{})
-	if err != nil {
-		return fmt.Errorf("failed to create client")
+func NewNamespaceCloner(ksClient client.Client) *NamespaceCloner {
+	return &NamespaceCloner{
+		Client: ksClient,
+		logger: logf.Log.WithName("namespace-cloner"),
 	}
+}
+
+func (c *NamespaceCloner) Clone(ctx context.Context, sourceNamespace, targetNamespace, suffix string) error {
+	log := c.logger.WithValues("targetNamespace", targetNamespace, "suffix", suffix)
+
 	targetNs := &corev1.Namespace{}
-	err = cl.Get(ctx, client.ObjectKey{Name: targetNamespace}, targetNs)
+	err := c.Get(ctx, client.ObjectKey{Name: targetNamespace}, targetNs)
 	// we expect at least a NotFound error here, otherwise the namespace already exists, and we don't want to override it
 	if err == nil {
 		return fmt.Errorf("target namespace already exists %s", targetNamespace)
@@ -56,10 +56,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 	}
 
 	// only get topLevelResources without ownership
-	topLevelResources, err := GetTopLevelResources(ctx, sourceNamespace)
-	if err != nil {
-		return fmt.Errorf("unable to fetch all resources from %s", sourceNamespace)
-	}
+	topLevelResources := GetTopLevelResources(ctx, sourceNamespace)
 
 	// create targetNamespace
 	targetNs.Name = targetNamespace
@@ -70,14 +67,14 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 		"orakel.fhnw.ch/suffix":           suffix,
 	}
 
-	err = cl.Create(ctx, targetNs)
+	err = c.Create(ctx, targetNs)
 	if err != nil {
 		return fmt.Errorf("error creating target namespace: %w", err)
 	}
 
 	// First let's clone the clusterRoleBindings, as they are not namespaced
 	// and pods might fail if their serviceAccounts are not bound to the correct roles
-	clonedClusterRoleBindings, err := cloneClusterRoleBindings(ctx, sourceNamespace, targetNamespace, suffix)
+	clonedClusterRoleBindings, err := c.cloneClusterRoleBindings(ctx, sourceNamespace, targetNamespace, suffix)
 	if err != nil {
 		return fmt.Errorf("error cloning cluster role bindings: %w", err)
 	}
@@ -137,7 +134,7 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 			}
 		}
 
-		err = cl.Create(ctx, clonedResource)
+		err = c.Create(ctx, clonedResource)
 		if err != nil {
 			log.Error(err, fmt.Sprintf("error creating %s/%s", resource.GetKind(), resource.GetName()))
 		} else {
@@ -150,17 +147,11 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 	return nil
 }
 
-func cloneClusterRoleBindings(ctx context.Context, sourceNamespace, targetNamespace, suffix string) (int, error) {
-	log := logf.FromContext(ctx).WithName("runner").WithValues("targetNamespace", targetNamespace)
-
-	// Get the client
-	cl, err := client.New(config.GetConfigOrDie(), client.Options{})
-	if err != nil {
-		return 0, fmt.Errorf("failed to create client: %w", err)
-	}
+func (c *NamespaceCloner) cloneClusterRoleBindings(ctx context.Context, sourceNamespace, targetNamespace, suffix string) (int, error) {
+	log := c.logger.WithValues("targetNamespace", targetNamespace, "suffix", suffix)
 
 	clusterRoleBindingList := &rbacv1.ClusterRoleBindingList{}
-	cl.List(ctx, clusterRoleBindingList)
+	c.List(ctx, clusterRoleBindingList)
 
 	clonedClusterRoleBindings := 0
 	if len(clusterRoleBindingList.Items) > 0 {
@@ -217,7 +208,7 @@ func cloneClusterRoleBindings(ctx context.Context, sourceNamespace, targetNamesp
 					}
 				}
 
-				err = cl.Create(ctx, clonedClusterRoleBinding)
+				err := c.Create(ctx, clonedClusterRoleBinding)
 				if err != nil {
 					return clonedClusterRoleBindings, fmt.Errorf("error creating cluster role binding %s: %w", clusterRoleBinding.Name, err)
 				}
@@ -227,108 +218,4 @@ func cloneClusterRoleBindings(ctx context.Context, sourceNamespace, targetNamesp
 	}
 
 	return clonedClusterRoleBindings, nil
-}
-
-func GetTopLevelResources(ctx context.Context, namespace string) ([]*unstructured.Unstructured, error) {
-
-	allResources, err := getAllResources(ctx, namespace)
-	if err != nil {
-		return nil, err
-	}
-
-	unownedResources := []*unstructured.Unstructured{}
-	for _, resourceList := range allResources {
-		for _, resource := range resourceList.Items {
-			if len(resource.GetOwnerReferences()) == 0 {
-				unownedResources = append(unownedResources, &resource)
-			}
-		}
-	}
-
-	return unownedResources, nil
-
-}
-
-// Get all resources in a namespace, this doesn't filter owned resources
-// First we need to use a discovery client to get all namespaced resource types
-// Afterwards we can use a dynamic client, to load resources from any type into Unstructred objects
-func getAllResources(ctx context.Context, namespace string) (map[string]*unstructured.UnstructuredList, error) {
-	log := logf.FromContext(ctx).WithName("runner")
-
-	dynamicClient, err := dynamic.NewForConfig(config.GetConfigOrDie())
-	if err != nil {
-		return nil, err
-	}
-
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config.GetConfigOrDie())
-	if err != nil {
-		return nil, err
-	}
-
-	namespacedResources, err := discoveryClient.ServerPreferredNamespacedResources()
-	if err != nil {
-		// ignore groupDiscoveryFailed error, most likely due to orphaned CRDs
-		if !discovery.IsGroupDiscoveryFailedError(err) {
-			return nil, err
-		}
-
-	}
-
-	resources := make(map[string]*unstructured.UnstructuredList)
-	for _, resourceList := range namespacedResources {
-		if len(resourceList.APIResources) == 0 {
-			log.V(3).Info("no resources found for group version", "groupVersion", resourceList.GroupVersion)
-			continue
-		}
-
-		for _, resourceType := range resourceList.APIResources {
-			if !resourceType.Namespaced {
-				log.V(2).Info("skipping non-namespaced resource", "resourceType", resourceType.Name)
-				continue
-			}
-
-			// Skip all resources in the metrics group
-			if strings.Contains(resourceType.Group, "metrics") {
-				continue
-			}
-
-			if slices.Contains(resourcesToSkip, strings.ToLower(resourceType.Name)) || strings.Contains(resourceType.Name, "/") {
-				log.V(2).Info("skipping resource", "resourceName", resourceType.Name)
-				continue
-			}
-			groupVersion, err := schema.ParseGroupVersion(resourceList.GroupVersion)
-			if err != nil {
-				log.Error(err, "error parsing group version", "groupVersion", resourceList.GroupVersion)
-				continue
-			}
-
-			gvr := schema.GroupVersionResource{
-				Group:    groupVersion.Group,
-				Version:  groupVersion.Version,
-				Resource: resourceType.Name,
-			}
-
-			resourceObjects, err := dynamicClient.Resource(gvr).Namespace(namespace).List(ctx, v1.ListOptions{})
-
-			if err != nil {
-				log.Error(err, "error listing resources", "kind", gvr.String())
-				continue
-			}
-			if len(resourceObjects.Items) == 0 {
-				log.V(2).Info("no resources found for", "kind", gvr.String())
-				continue
-			}
-			log.V(3).Info(fmt.Sprintf("found %d resources for: %s\n", len(resourceObjects.Items), gvr.String()))
-
-			if _, ok := resources[resourceType.Name]; !ok {
-				resources[resourceType.Name] = &unstructured.UnstructuredList{}
-				resources[resourceType.Name].SetGroupVersionKind(gvr.GroupVersion().WithKind(resourceType.Kind))
-			}
-			// Append the items to the existing list
-			resources[resourceType.Name].Items = append(resources[resourceType.Name].Items, resourceObjects.Items...)
-		}
-
-	}
-
-	return resources, nil
 }

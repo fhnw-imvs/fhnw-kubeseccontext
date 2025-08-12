@@ -26,10 +26,12 @@ import (
 )
 
 var (
-	metricsRecordingInterval = 15          // seconds
-	k8sClient                client.Client // Kubernetes client to fetch pods and nodes
-	restClient               *http.Client  // HTTP client to fetch metrics from kubelet
-	apiHost                  string        // Host of the kubelet API
+	// setup during init() to avoid passing the client around
+	k8sClient  client.Client // Kubernetes client to fetch pods and nodes
+	restClient *http.Client  // HTTP client to fetch metrics from kubelet
+	apiHost    string        // Host of the kubelet API
+
+	metricsRecordingInterval = 15 // seconds
 	logger                   = logf.Log.WithName("MetricsRecorder")
 
 	// the metrics are stored in a map on the package level, to avoid fetching them multiple if multiple hardening checks are run in parallel
