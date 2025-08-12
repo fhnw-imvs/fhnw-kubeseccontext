@@ -27,7 +27,7 @@ appVersion: "0.1.0"
 
 annotations:
   artifacthub.io/category: security
-  artifacthub.io/license: MIT
+  artifacthub.io/license: Apache-2.0
   artifacthub.io/crds: |
     - kind: WorkloadHardeningCheck
       version: v1alpha1
