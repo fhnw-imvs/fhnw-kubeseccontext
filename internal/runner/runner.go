@@ -3,8 +3,6 @@ package runner
 import (
 	"context"
 	"fmt"
-	"maps"
-	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +28,7 @@ import (
 
 	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/runner/recorder"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
 	wh "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
 	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/orakel"
@@ -682,109 +681,16 @@ func (r *WorkloadCheckRunner) recordMetrics(ctx context.Context) ([]recording.Re
 
 	time.Sleep(2 * time.Second) // Give the workload some time to be ready with the updated security context
 
-	// get pods under observation, we use the label selector from the workload under test
-	pods := &corev1.PodList{}
-PodsAssigned:
-	for len(pods.Items) == 0 {
-		err = r.List(
-			ctx,
-			pods,
-			&client.ListOptions{
-				Namespace:     targetNamespace,
-				LabelSelector: labelSelector,
-			},
-		)
-		if err != nil {
-			r.logger.Error(err, "error fetching pods")
-			return nil, err
-		}
-
-		// If the pods aren't assigned to a node, we cannot record metrics
-		if len(pods.Items) > 0 {
-			allAssigned := true
-			for _, pod := range pods.Items {
-				if pod.Spec.NodeName == "" {
-					allAssigned = false
-					break
-				}
-			}
-			if allAssigned {
-				break PodsAssigned // All pods are assigned to a node, we can proceed
-			}
-
-			pods = &corev1.PodList{} // reset podList to retry fetching
-			r.logger.Info("Pods are not assigned to a node yet, retrying")
-			time.Sleep(1 * time.Second) // Wait for 1 second before retrying
-		}
-	}
-
-	// Filter pods not belonging to the latest generation
-	podsToRecord := []corev1.Pod{}
-	podNames := make(map[string]bool)
-	for _, pod := range pods.Items {
-		r.Get(ctx, types.NamespacedName{Namespace: pod.Namespace, Name: pod.Name}, &pod)
-
-		if pod.Status.Phase != corev1.PodRunning && pod.Status.Phase != corev1.PodPending {
-			continue
-		}
-		if pod.DeletionTimestamp != nil {
-			// Pod is being deleted, skip it
-			continue
-		}
-
-		podsToRecord = append(podsToRecord, pod)
-		podNames[pod.Name] = true
-	}
-
-	r.logger.Info(
-		"fetched pods matching workload",
-		"numberOfPods", len(podsToRecord),
-		"podsToRecord", slices.Collect(maps.Keys(podNames)),
+	metricsRecorder := recorder.NewMetricsRecorder(
+		ctx,
+		r.Client,
 	)
-
-	var wg sync.WaitGroup
-	wg.Add(len(podsToRecord))
-
-	// Initialize the channels with the expected capacity to avoid blocking
-	metricsChannel := make(chan *recording.RecordedMetrics, len(podsToRecord))
-
-	checkDurationSeconds := int(r.checkManager.GetCheckDuration().Seconds())
-
-	for _, pod := range podsToRecord {
-		go func() {
-			// the metrics are collected per pod
-			recordedMetrics, err := RecordMetrics(ctx, &pod, checkDurationSeconds, 15)
-			if err != nil {
-				r.logger.Error(err, "failed recording metrics")
-			} else {
-				r.logger.Info(
-					"recorded metrics",
-					"podName", pod.Name,
-				)
-			}
-
-			metricsChannel <- recordedMetrics
-
-			wg.Done()
-
-		}()
-	}
-
-	wg.Wait()
-
-	// close channels so that the range loops will stop
-	close(metricsChannel)
-
-	resourceUsageRecords := []recording.ResourceUsageRecord{}
-	for result := range metricsChannel {
-		for _, usage := range result.Usage {
-			resourceUsageRecords = append(resourceUsageRecords, usage)
-		}
-	}
-	r.logger.V(1).Info("collected metrics")
-	if len(resourceUsageRecords) == 0 {
-		r.logger.Info("no resource usage metrics recoded, this could be due to the workload not being ready or not having any resource usage metrics available")
-	}
+	resourceUsageRecords, err := metricsRecorder.RecordMetrics(
+		ctx,
+		targetNamespace,
+		labelSelector,
+		r.checkManager.GetCheckDuration(),
+	)
 
 	return resourceUsageRecords, nil
 }
@@ -844,13 +750,15 @@ PodsAssigned:
 	logMap := make(map[string][]string, len(pods.Items)*(len(pods.Items[0].Spec.Containers)+len(pods.Items[0].Spec.InitContainers)))
 	mapMutex := &sync.Mutex{}
 
+	podLogRecorder := recorder.NewPodLogRecorder(ctx)
+
 	for _, pod := range pods.Items {
 		go func() {
 
 			// The logs are collected per container in the pod
 			for _, container := range pod.Spec.Containers {
 
-				containerLog, err := GetLogs(ctx, &pod, container.Name, previous)
+				containerLog, err := podLogRecorder.GetLogs(ctx, &pod, container.Name, previous)
 				if err != nil {
 					r.logger.Error(
 						err,
@@ -876,7 +784,7 @@ PodsAssigned:
 
 			for _, container := range pod.Spec.InitContainers {
 
-				containerLog, err := GetLogs(ctx, &pod, container.Name, previous)
+				containerLog, err := podLogRecorder.GetLogs(ctx, &pod, container.Name, previous)
 				if err != nil {
 					r.logger.Error(
 						err,

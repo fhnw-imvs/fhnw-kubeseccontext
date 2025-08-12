@@ -43,8 +43,9 @@ type WorkloadRecording struct {
 type ResourceUsageRecord struct {
 	// Time when this recording was taken. Used to sort the recordings
 	Time metav1.Time `json:"timestamp,omitempty"`
-	// CPU usage in nanocpu
-	CPU int64 `json:"cpu,omitempty"`
+	// CpuNanoCores usage in nanocores
+	// 1 core = 1e9 nanocores
+	CpuNanoCores int64 `json:"cpu,omitempty"`
 	// Memory usage in bytes
-	Memory int64 `json:"memory,omitempty"`
+	MemoryBytes int64 `json:"memory,omitempty"`
 }

@@ -77,72 +77,13 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 
 	// First let's clone the clusterRoleBindings, as they are not namespaced
 	// and pods might fail if their serviceAccounts are not bound to the correct roles
-	clusterRoleBindingList := &rbacv1.ClusterRoleBindingList{}
-	cl.List(ctx, clusterRoleBindingList)
-
-	if len(clusterRoleBindingList.Items) > 0 {
-		for _, clusterRoleBinding := range clusterRoleBindingList.Items {
-			needsToBeCloned := false
-			if clusterRoleBinding.Subjects != nil {
-			Subjects:
-				for _, subject := range clusterRoleBinding.Subjects {
-					if subject.Kind == "ServiceAccount" && subject.Namespace == sourceNamespace {
-						log.V(1).Info("found cluster role binding for service account in source namespace", "name", clusterRoleBinding.Name, "serviceAccount", subject.Name)
-						needsToBeCloned = true
-						break Subjects
-					}
-				}
-			}
-
-			if needsToBeCloned {
-				// we need to clone the cluster role binding to the target namespace
-				clonedClusterRoleBinding := clusterRoleBinding.DeepCopy()
-				clonedClusterRoleBinding.SetResourceVersion("")
-				clonedClusterRoleBinding.SetSelfLink("")
-				clonedClusterRoleBinding.SetUID("")
-				clonedClusterRoleBinding.SetGeneration(0)
-
-				roleBindingName := clusterRoleBinding.Name + "-" + targetNamespace
-				// If the composite name is too long, we need to shorten it, and to avoid conflicts, we add a random suffix
-				if len(roleBindingName) > 250 {
-					suffixLength := 10
-					if len(clusterRoleBinding.Name) > 245 {
-						suffixLength = 253 - len(clusterRoleBinding.Name)
-					}
-					roleBindingName = clusterRoleBinding.Name + "-" + utilrand.String(suffixLength)
-					if len(roleBindingName) > 253 {
-						roleBindingName = roleBindingName[:253]
-					}
-				}
-				clonedClusterRoleBinding.SetName(roleBindingName)
-
-				// Add labels to the cloned ClusterRoleBinding
-				if clonedClusterRoleBinding.Labels == nil {
-					clonedClusterRoleBinding.Labels = make(map[string]string)
-				}
-				clonedClusterRoleBinding.Labels["app.kubernetes.io/managed-by"] = "oracle-of-funk"
-				clonedClusterRoleBinding.Labels["orakel.fhnw.ch/source-namespace"] = sourceNamespace
-				clonedClusterRoleBinding.Labels["orakel.fhnw.ch/target-namespace"] = targetNamespace
-				clonedClusterRoleBinding.Labels["orakel.fhnw.ch/suffix"] = suffix
-
-				// override namespace!
-				for i, subject := range clonedClusterRoleBinding.Subjects {
-					if subject.Kind == "ServiceAccount" && subject.Namespace == sourceNamespace {
-						// change the namespace to the target namespace
-						clonedClusterRoleBinding.Subjects[i].Namespace = targetNamespace
-					}
-				}
-
-				err = cl.Create(ctx, clonedClusterRoleBinding)
-				if err != nil {
-					return fmt.Errorf("error creating cluster role binding %s: %w", clusterRoleBinding.Name, err)
-				}
-			}
-
-		}
+	clonedClusterRoleBindings, err := cloneClusterRoleBindings(ctx, sourceNamespace, targetNamespace, suffix)
+	if err != nil {
+		return fmt.Errorf("error cloning cluster role bindings: %w", err)
 	}
 
 	// Now we can clone the resources, and be sure that the serviceAccounts have their rolebindings in place
+	clonedResourcesCount := 0
 	for _, resource := range topLevelResources {
 
 		// Skip resources which automatically created in each namespace
@@ -150,8 +91,9 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 			(resource.GetKind() == "ConfigMap" && resource.GetName() == "kube-root-ca.crt") {
 			continue
 		}
+		clonedResourcesCount++
 
-		log.V(1).Info(fmt.Sprintf("cloning %s/%s", resource.GetKind(), resource.GetName()))
+		log.V(3).Info(fmt.Sprintf("cloning %s/%s", resource.GetKind(), resource.GetName()))
 
 		// cleanup resource before cloning
 		clonedResource := resource.DeepCopy()
@@ -203,9 +145,88 @@ func CloneNamespace(ctx context.Context, sourceNamespace, targetNamespace, suffi
 		}
 	}
 
-	log.Info("namespace cloned")
+	log.Info("namespace cloned", "clonedResources", clonedResourcesCount, "clondedClusterRoleBindings", clonedClusterRoleBindings)
 
 	return nil
+}
+
+func cloneClusterRoleBindings(ctx context.Context, sourceNamespace, targetNamespace, suffix string) (int, error) {
+	log := logf.FromContext(ctx).WithName("runner").WithValues("targetNamespace", targetNamespace)
+
+	// Get the client
+	cl, err := client.New(config.GetConfigOrDie(), client.Options{})
+	if err != nil {
+		return 0, fmt.Errorf("failed to create client: %w", err)
+	}
+
+	clusterRoleBindingList := &rbacv1.ClusterRoleBindingList{}
+	cl.List(ctx, clusterRoleBindingList)
+
+	clonedClusterRoleBindings := 0
+	if len(clusterRoleBindingList.Items) > 0 {
+		for _, clusterRoleBinding := range clusterRoleBindingList.Items {
+			needsToBeCloned := false
+			if clusterRoleBinding.Subjects != nil {
+			Subjects:
+				for _, subject := range clusterRoleBinding.Subjects {
+					if subject.Kind == "ServiceAccount" && subject.Namespace == sourceNamespace {
+						log.V(1).Info("found cluster role binding for service account in source namespace", "name", clusterRoleBinding.Name, "serviceAccount", subject.Name)
+						needsToBeCloned = true
+						break Subjects
+					}
+				}
+			}
+
+			if needsToBeCloned {
+				clonedClusterRoleBindings++
+				// we need to clone the cluster role binding to the target namespace
+				clonedClusterRoleBinding := clusterRoleBinding.DeepCopy()
+				clonedClusterRoleBinding.SetResourceVersion("")
+				clonedClusterRoleBinding.SetSelfLink("")
+				clonedClusterRoleBinding.SetUID("")
+				clonedClusterRoleBinding.SetGeneration(0)
+
+				roleBindingName := clusterRoleBinding.Name + "-" + targetNamespace
+				// If the composite name is too long, we need to shorten it, and to avoid conflicts, we add a random suffix
+				if len(roleBindingName) > 250 {
+					suffixLength := 10
+					if len(clusterRoleBinding.Name) > 245 {
+						suffixLength = 253 - len(clusterRoleBinding.Name)
+					}
+					roleBindingName = clusterRoleBinding.Name + "-" + utilrand.String(suffixLength)
+					if len(roleBindingName) > 253 {
+						roleBindingName = roleBindingName[:253]
+					}
+				}
+				clonedClusterRoleBinding.SetName(roleBindingName)
+
+				// Add labels to the cloned ClusterRoleBinding
+				if clonedClusterRoleBinding.Labels == nil {
+					clonedClusterRoleBinding.Labels = make(map[string]string)
+				}
+				clonedClusterRoleBinding.Labels["app.kubernetes.io/managed-by"] = "oracle-of-funk"
+				clonedClusterRoleBinding.Labels["orakel.fhnw.ch/source-namespace"] = sourceNamespace
+				clonedClusterRoleBinding.Labels["orakel.fhnw.ch/target-namespace"] = targetNamespace
+				clonedClusterRoleBinding.Labels["orakel.fhnw.ch/suffix"] = suffix
+
+				// override namespace!
+				for i, subject := range clonedClusterRoleBinding.Subjects {
+					if subject.Kind == "ServiceAccount" && subject.Namespace == sourceNamespace {
+						// change the namespace to the target namespace
+						clonedClusterRoleBinding.Subjects[i].Namespace = targetNamespace
+					}
+				}
+
+				err = cl.Create(ctx, clonedClusterRoleBinding)
+				if err != nil {
+					return clonedClusterRoleBindings, fmt.Errorf("error creating cluster role binding %s: %w", clusterRoleBinding.Name, err)
+				}
+			}
+
+		}
+	}
+
+	return clonedClusterRoleBindings, nil
 }
 
 func GetTopLevelResources(ctx context.Context, namespace string) ([]*unstructured.Unstructured, error) {

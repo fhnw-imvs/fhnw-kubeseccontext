@@ -29,7 +29,7 @@ func NewCheckMetricsSummary(metrics []recording.ResourceUsageRecord) *CheckMetri
 	}
 
 	for _, containerMetrics := range metrics {
-		checkSummary.updateValues(containerMetrics.CPU, containerMetrics.Memory)
+		checkSummary.updateValues(containerMetrics.CpuNanoCores, containerMetrics.MemoryBytes)
 	}
 
 	// Calculate the summary statistics for CPU and Memory
@@ -117,7 +117,7 @@ func (mo *MetricsOrakel) LoadBaseline(workloadRecording *recording.WorkloadRecor
 	}
 
 	for _, containerMetrics := range workloadRecording.RecordedMetrics {
-		mo.BaselineMetricsSummary.updateValues(containerMetrics.CPU, containerMetrics.Memory)
+		mo.BaselineMetricsSummary.updateValues(containerMetrics.CpuNanoCores, containerMetrics.MemoryBytes)
 	}
 
 	// Calculate the summary statistics for CPU and Memory
