@@ -3,8 +3,9 @@ package checks
 import (
 	"fmt"
 
-	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	corev1 "k8s.io/api/core/v1"
+
+	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 )
 
 var capabilityChecks = map[string]CheckInterface{}

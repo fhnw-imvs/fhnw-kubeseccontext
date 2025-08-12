@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -20,6 +19,8 @@ import (
 	statsapi "k8s.io/kubelet/pkg/apis/stats/v1alpha1"
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 )
 
 var podMetrics = map[types.UID]statsapi.PodStats{}

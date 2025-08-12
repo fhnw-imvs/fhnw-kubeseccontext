@@ -9,11 +9,6 @@ import (
 	"sync"
 	"time"
 
-	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
-	wh "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/orakel"
 	"github.com/go-logr/logr"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
@@ -32,6 +27,12 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+
+	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/valkey"
+	wh "github.com/fhnw-imvs/fhnw-kubeseccontext/internal/workload"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/orakel"
 )
 
 type WorkloadCheckRunner struct {

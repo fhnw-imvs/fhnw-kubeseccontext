@@ -4,12 +4,13 @@ import (
 	"context"
 	"fmt"
 
-	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 	"golang.org/x/exp/maps"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
 )
 
 func (m *WorkloadCheckManager) GetRequiredCheckRuns(ctx context.Context) []string {

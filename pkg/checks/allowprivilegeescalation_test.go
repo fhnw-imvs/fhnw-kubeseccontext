@@ -3,11 +3,12 @@ package checks_test
 import (
 	"testing"
 
-	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/checks"
 	"github.com/stretchr/testify/assert"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/utils/ptr"
+
+	checksv1alpha1 "github.com/fhnw-imvs/fhnw-kubeseccontext/api/v1alpha1"
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/pkg/checks"
 )
 
 func TestAllowPrivilegeEscalationCheck(t *testing.T) {

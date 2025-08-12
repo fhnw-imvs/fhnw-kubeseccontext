@@ -6,8 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 	valkey "github.com/valkey-io/valkey-go"
+
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 )
 
 type ValkeyClient struct {

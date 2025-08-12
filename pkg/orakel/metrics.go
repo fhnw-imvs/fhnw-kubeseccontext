@@ -3,8 +3,9 @@ package orakel
 import (
 	"slices"
 
-	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 	"gonum.org/v1/gonum/stat"
+
+	"github.com/fhnw-imvs/fhnw-kubeseccontext/internal/recording"
 )
 
 type CheckMetricsSummary struct {
