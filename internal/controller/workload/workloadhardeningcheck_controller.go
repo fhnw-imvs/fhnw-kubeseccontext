@@ -29,6 +29,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
+	utilrand "k8s.io/apimachinery/pkg/util/rand"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -288,7 +289,8 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 
 		// The baseline is recorded twice, to make the log matching better, as the logs are ingested using different timestamps
 
-		time.Sleep(10 * time.Second) // Sleep for a short duration to allow the first baseline recording to start
+		offset := 10 + utilrand.Intn(9)                 // Random offset between 10 and 19 seconds to avoid all checks running at the same time
+		time.Sleep(time.Duration(offset) * time.Second) // Sleep for a short duration to allow the first baseline recording to start
 		baselineRunner = runner.NewWorkloadCheckRunner(ctx, r.ValKeyClient, r.Recorder, workloadHardening, "baseline-2")
 		go baselineRunner.RunCheck(ctx, workloadHardening.Spec.SecurityContext)
 
