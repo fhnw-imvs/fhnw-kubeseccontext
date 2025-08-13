@@ -130,3 +130,61 @@ Last but not least, there are a few custom workloads, based on simple bash scrip
 - A workload trying to escalate his privileges.
 
 
+## Development
+
+This Operator is developed in Go, using the Operator SDK. The code is structured in a way that allows for easy testing and development.
+
+### Architecture
+
+<h1 align="center" style="border-bottom: none">
+    <img alt="architecture-overview" src="docs/images/orakel-overview.png" width="400">
+</h1>
+
+The operator is structured around the `Controller` pattern, where each controller is responsible for a specific resource type. The two main controllers are:
+
+- `WorkloadHardeningCheckController`: Responsible for handling `WorkloadHardeningCheck` resources.
+- `NamespaceHardeningCheckController`: Responsible for handling `NamespaceHardeningCheck` resources.
+
+In addition both CRDs also have mutating and validating webhooks, which are used to validate the resources and mutate them before they are created.
+
+### Webhooks
+
+The mutating webhooks, only add a `suffix` to both the `WorkloadHardeningCheck` and `NamespaceHardeningCheck` resources, if none is provided.
+This suffix is used to create a unique name for the cloned namespaces, so that it does not conflict with the original workload.
+In case of the `NamespaceHardeningCheck` the suffix is also used to create extended suffixes for the `WorkloadHardeningCheck` resources.
+
+The validating webhook for the `NamespaceHardeningCheck` ensures that the `targetNamespace` exists, but does not check if the namespace is empty. 
+
+The validating webhook for the `WorkloadHardeningCheck` ensures that the `targetRef` points to an existing workload, which is in the `ready` state. If you apply the `WorkloadHardeningCheck` at the same time as your workload, the webhook will not be able to find the workload, and will reject the request. In this case you need to wait until the workload is in the `ready` state and apply it again.
+
+### CheckRuns / Types
+
+To run checks a `CheckRunner` is used, which is responsible for running the checks and collecting the results. The `CheckRunner` is implemented in `internal/runner/runners.go`.
+
+The available checks are implemented based on the `CheckInterface` in `pkg/checks/check.go`, and new checks can be added by implementing this interface. They need to register themselves using the `RegisterCheck` function in `pkg/checks`.
+
+The `CheckInterface`, which defines two methods: 
+1. `ShouldRun` to check if the `podSpec` does not yet define the necessary `securityContext` attributes
+1. `GetSecurityContextDefaults` to apply the `securityContext` required for the specific check.
+
+The `CheckRunner` will then run the checks and collect the results into a `recording.WorkloadRecording` struct, which is serialized and stored in ValKey.
+To track the progress of each check, the `CheckRunner` creates a `status.Condition` for each check, which is updated as the check progresses.
+
+<h1 align="center" style="border-bottom: none">
+    <img alt="check-run-state-diagram" src="docs/images/check-run-state-diagram.png" width="400">
+</h1>
+
+### Recording signals
+
+The `CheckRunner` uses a `Recorder` per signal. Those are implement in `internal/recording/` and explicitly called in the `CheckRunner`.
+
+Some signals are only recorded if the pod reaches the `ready` state, while others are recorded regardless of the pod state. The `Recorder` is responsible for deciding which signals to record based on the pod state and the signal type.
+
+### Functionality Oracles
+
+There are two independent oracles implemented in the operator, which are used to compare the behavior of the workloads:
+
+1. `LogOrakel`: This oracle analyzes the logs of the recorded baselines and compares them to logs of the `checkRuns`. The oracle is based on the [Drain3](https://github.com/logpai/Drain3) algorithm as implemented by [faceair/drain](https://github.com/faceair/drain). Logs that are not present in the baseline, are considered anomalies, thus indicating a change in the workload's behavior. If any anomalies are detected, the oracle will mark the check as failed, and store the detected anomalies in the `CheckRun` status.
+1. `MetricsOrakel`: This oracle analyzes the metrics of the recorded baselines and compares them to metrics of the `checkRuns`. The oracle calculates the mean and standard deviation of the metrics and compares them to the baseline. If the metric is outside of the range of the baselines, it is considered a deviation and flagged on the `checkRun`.
+
+The oracles are implement in `pkg/orakel/` from where they can be included into other golang projects as well.

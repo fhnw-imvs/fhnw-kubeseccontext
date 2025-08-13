@@ -10,5 +10,5 @@ spec:
     apiVersion: apps/v1
     kind: StatefulSet
     name: mariadb
-  recordingDuration: 1m
+  recordingDuration: 2m
   suffix: orakel

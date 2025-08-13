@@ -41,6 +41,7 @@ func (m *WorkloadCheckManager) SetCondition(ctx context.Context, condition metav
 	return err
 }
 
+// RemoveCheckConditions removes all check-related conditions from the workloadHardeningCheck.
 func (m *WorkloadCheckManager) RemoveCheckConditions(ctx context.Context) error {
 	// Remove all check conditions from the workloadHardeningCheck
 	m.logger.V(2).Info("Removing all check conditions from WorkloadHardeningCheck", "name", m.workloadHardeningCheck.Name)
@@ -57,6 +58,10 @@ func (m *WorkloadCheckManager) RemoveCheckConditions(ctx context.Context) error 
 		for _, condition := range m.workloadHardeningCheck.Status.Conditions {
 			if condition.Type == checksv1alpha1.ConditionTypeFinished {
 				// Keep the Finished condition, as it is not a check condition
+				remainingConditions = append(remainingConditions, condition)
+			}
+			if condition.Type == checksv1alpha1.ConditionTypeAnalysis {
+				// Keep the Analysis condition, as it is not a check condition
 				remainingConditions = append(remainingConditions, condition)
 			}
 		}

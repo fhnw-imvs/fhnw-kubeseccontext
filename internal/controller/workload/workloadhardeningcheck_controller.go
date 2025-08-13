@@ -2,6 +2,7 @@ package workload
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"golang.org/x/text/cases"
@@ -124,11 +125,17 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 			logger.Error(err, "Failed to analyze check runs")
 			checkManager.SetCondition(ctx, metav1.Condition{
 				Type:    checksv1alpha1.ConditionTypeAnalysis,
-				Status:  metav1.ConditionFalse,
+				Status:  metav1.ConditionTrue,
 				Reason:  checksv1alpha1.ReasonAnalysisFailed,
-				Message: "Error analyzing check runs",
+				Message: fmt.Sprintf("Analyzing check runs failed: %s", err.Error()),
 			})
-			return ctrl.Result{RequeueAfter: 10 * time.Minute}, nil
+			checkManager.SetCondition(ctx, metav1.Condition{
+				Type:    checksv1alpha1.ConditionTypeFinished,
+				Status:  metav1.ConditionTrue,
+				Reason:  checksv1alpha1.ReasonAnalysisFailed,
+				Message: "Analyzing check runs failed, cannot proceed with checks. Check the CheckResultAnalysis condition for more details.",
+			})
+			return ctrl.Result{}, nil
 		}
 
 		checkManager.SetRecommendation(ctx)
@@ -253,6 +260,7 @@ func (r *WorkloadHardeningCheckReconciler) Reconcile(ctx context.Context, req ct
 	return ctrl.Result{}, nil
 }
 
+// clones the target workloads into two baseline namespaces, one for each baseline recording
 func (r *WorkloadHardeningCheckReconciler) recordBaseline(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, checkManager *workload.WorkloadCheckManager) (ctrl.Result, error) {
 	// Set the condition to indicate that we are starting the baseline recording
 
@@ -278,6 +286,9 @@ func (r *WorkloadHardeningCheckReconciler) recordBaseline(ctx context.Context, w
 
 }
 
+// determines which checks need to be run and starts them
+// If the RunMode is set to Parallel, all checks are started in parallel
+// If the RunMode is set to Sequential, the checks are started one after another
 func (r *WorkloadHardeningCheckReconciler) recordChecks(ctx context.Context, workloadHardening *checksv1alpha1.WorkloadHardeningCheck, checkManager *workload.WorkloadCheckManager) (ctrl.Result, error) {
 	logger := logf.FromContext(ctx).WithName("recordChecks")
 

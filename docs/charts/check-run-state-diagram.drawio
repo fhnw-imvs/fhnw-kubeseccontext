@@ -1,0 +1,84 @@
+<mxfile host="Electron" agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) draw.io/28.0.6 Chrome/138.0.7204.100 Electron/37.2.3 Safari/537.36" version="28.0.6">
+  <diagram id="stateDiagram" name="State Diagram">
+    <mxGraphModel dx="1425" dy="828" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="S0" value="&lt;b&gt;Status:&lt;/b&gt; unknown &lt;br&gt;&lt;b&gt;Reason:&lt;/b&gt; CheckNotStarted" style="rounded=1;whiteSpace=wrap;html=1;fontSize=18;strokeWidth=3;align=left;spacingLeft=7;strokeColor=#E1AD01;fillColor=#90E0EF;fontFamily=Roboto Mono;verticalAlign=middle;spacingTop=3;" parent="1" vertex="1">
+          <mxGeometry x="10" y="210" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="_hgvd5b1KVoJQqldMA3h-1" value="Timeout &lt;br&gt;(&amp;gt; recordingDuration + 2m)" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;exitX=1;exitY=0.25;exitDx=0;exitDy=0;entryX=0.75;entryY=0;entryDx=0;entryDy=0;dashed=1;fontSize=18;strokeWidth=2;align=center;spacingLeft=10;strokeColor=#E1AD01;fontFamily=Roboto Mono;" parent="1" source="S1" target="S2" edge="1">
+          <mxGeometry x="-0.3043" y="45" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="S1" value="&lt;b&gt;Status:&lt;/b&gt; false &lt;br&gt;&lt;b&gt;Reason:&lt;/b&gt; CheckRecording" style="rounded=1;whiteSpace=wrap;html=1;fontSize=18;strokeWidth=3;align=left;spacingLeft=7;strokeColor=#E1AD01;fillColor=#90E0EF;fontFamily=Roboto Mono;verticalAlign=middle;spacingTop=3;" parent="1" vertex="1">
+          <mxGeometry x="530" y="210" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="S2" value="&lt;b&gt;Status:&lt;/b&gt; unknown&lt;br&gt;&lt;b&gt;Reason:&lt;/b&gt; Requeue" style="rounded=1;whiteSpace=wrap;html=1;fontSize=18;strokeWidth=3;align=left;spacingLeft=7;strokeColor=#E1AD01;fillColor=#90E0EF;fontFamily=Roboto Mono;verticalAlign=middle;spacingTop=3;" parent="1" vertex="1">
+          <mxGeometry x="940" y="420" width="220" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="S3" value="&lt;b&gt;Status:&lt;/b&gt; true&lt;br&gt;&lt;b&gt;Reason:&lt;/b&gt; CheckRecordingFinished" style="rounded=1;whiteSpace=wrap;html=1;fontSize=18;strokeWidth=3;align=left;spacingLeft=7;strokeColor=#E1AD01;fillColor=#90E0EF;fontFamily=Roboto Mono;verticalAlign=middle;spacingTop=3;" parent="1" vertex="1">
+          <mxGeometry x="500" y="30" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="S4" value="&lt;b&gt;Status:&lt;/b&gt; true&lt;br&gt;&lt;b&gt;Reason:&lt;/b&gt; CheckRecordingFailed" style="rounded=1;whiteSpace=wrap;html=1;fontSize=18;strokeWidth=3;align=left;spacingLeft=7;strokeColor=#E1AD01;fillColor=#90E0EF;fontFamily=Roboto Mono;verticalAlign=middle;spacingTop=3;" parent="1" vertex="1">
+          <mxGeometry x="500" y="520" width="340" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="e1" value="Start check run" style="endArrow=block;html=1;rounded=0;fontSize=18;strokeWidth=2;align=center;spacingLeft=10;strokeColor=#E1AD01;fontFamily=Roboto Mono;" parent="1" source="S0" target="S1" edge="1">
+          <mxGeometry x="-0.0476" relative="1" as="geometry">
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e2" value="Successful finish" style="endArrow=block;html=1;rounded=0;fontSize=18;strokeWidth=2;align=center;spacingLeft=10;strokeColor=#E1AD01;fontFamily=Roboto Mono;" parent="1" source="S1" target="S3" edge="1">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+        <mxCell id="e3" value="Unrecoverable failure" style="endArrow=block;html=1;rounded=0;fontSize=18;strokeWidth=2;align=center;spacingLeft=10;entryX=0.5;entryY=0;entryDx=0;entryDy=0;strokeColor=#E1AD01;fontFamily=Roboto Mono;" parent="1" source="S1" target="S4" edge="1">
+          <mxGeometry x="-0.04" y="-60" relative="1" as="geometry">
+            <mxPoint x="480" y="690" as="targetPoint" />
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e4" value="Retryable condition" style="endArrow=block;html=1;rounded=0;entryX=0.25;entryY=0;entryDx=0;entryDy=0;exitX=1;exitY=0.75;exitDx=0;exitDy=0;fontSize=18;strokeWidth=2;align=center;spacingLeft=10;strokeColor=#E1AD01;fontFamily=Roboto Mono;" parent="1" source="S1" target="S2" edge="1">
+          <mxGeometry x="-0.3333" y="-45" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="995" y="270" />
+            </Array>
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e6" value="Unrecoverable failure" style="endArrow=block;html=1;rounded=0;fontSize=18;strokeWidth=2;align=center;spacingLeft=10;entryX=1;entryY=0.5;entryDx=0;entryDy=0;exitX=0.5;exitY=1;exitDx=0;exitDy=0;strokeColor=#E1AD01;fontFamily=Roboto Mono;" parent="1" source="S2" target="S4" edge="1">
+          <mxGeometry x="-0.1429" y="20" relative="1" as="geometry">
+            <mxPoint x="550" y="699.4285714285713" as="targetPoint" />
+            <Array as="points">
+              <mxPoint x="1050" y="560" />
+            </Array>
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="e5_dashed" value="Retry" style="endArrow=block;html=1;rounded=0;dashed=1;dashPattern=4 4;entryX=0.75;entryY=1;entryDx=0;entryDy=0;fontSize=18;strokeWidth=2;align=center;spacingLeft=10;strokeColor=#E1AD01;fontFamily=Roboto Mono;" parent="1" source="S2" target="S1" edge="1">
+          <mxGeometry x="-0.4568" relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="740" y="460" />
+            </Array>
+            <mxPoint as="offset" />
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="TBO9qtadB3PGoPaVG6jK-1" value="1" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fontSize=18;horizontal=1;fontFamily=Roboto Mono;fillColor=none;strokeWidth=3;strokeColor=#B18801;fontStyle=1;fontColor=#B18801;" vertex="1" parent="1">
+          <mxGeometry x="250" y="220" width="30" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="TBO9qtadB3PGoPaVG6jK-2" value="2" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fontSize=18;horizontal=1;fontFamily=Roboto Mono;fillColor=none;strokeWidth=3;strokeColor=#B18801;fontStyle=1;fontColor=#B18801;" vertex="1" parent="1">
+          <mxGeometry x="770" y="220" width="30" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="TBO9qtadB3PGoPaVG6jK-3" value="3" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fontSize=18;horizontal=1;fontFamily=Roboto Mono;fillColor=none;strokeWidth=3;strokeColor=#B18801;fontStyle=1;fontColor=#B18801;" vertex="1" parent="1">
+          <mxGeometry x="800" y="40" width="30" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="TBO9qtadB3PGoPaVG6jK-4" value="4" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fontSize=18;horizontal=1;fontFamily=Roboto Mono;fillColor=none;strokeWidth=3;strokeColor=#B18801;fontStyle=1;fontColor=#B18801;" vertex="1" parent="1">
+          <mxGeometry x="800" y="530" width="30" height="30" as="geometry" />
+        </mxCell>
+        <mxCell id="TBO9qtadB3PGoPaVG6jK-5" value="5" style="ellipse;whiteSpace=wrap;html=1;aspect=fixed;fontSize=18;horizontal=1;fontFamily=Roboto Mono;fillColor=none;strokeWidth=3;strokeColor=#B18801;fontStyle=1;fontColor=#B18801;" vertex="1" parent="1">
+          <mxGeometry x="1120" y="430" width="30" height="30" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
