@@ -27,8 +27,6 @@ orakel:
     registry: ghcr.io
     repository: fhnw-imvs/fhnw-kubeseccontext
     pullPolicy: IfNotPresent
-    # -- Overrides the image tag whose default is the chart appVersion.
-    tag: 0.0.1
 
   # -- The operator clones a full namespace, and recreates all resources within so the service account needs to have the permissions to do so
   serviceAccount:
