@@ -92,7 +92,7 @@ func getAllResources(ctx context.Context, namespace string) map[string]*unstruct
 				continue
 			}
 
-			if slices.Contains(resourcesToSkip, strings.ToLower(resourceType.Name)) || strings.Contains(resourceType.Name, "/") {
+			if slices.Contains(resourcesToSkip, strings.ToLower(resourceType.Kind)) || strings.Contains(resourceType.Name, "/") {
 				log.V(2).Info("skipping resource", "resourceKind", resourceType.Kind, "resourceName", resourceType.Name)
 				continue
 			}
