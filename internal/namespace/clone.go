@@ -13,22 +13,6 @@ import (
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-var resourcesToSkip = []string{
-	"bindings",
-	"localsubjectaccessreviews",
-	"endpointslices",
-	"endpoints",
-	"events",
-	"ingresses",
-	"httproutes",
-	"gateways",
-	"podmetrics",
-	"controllerrevisions",
-	// exclude our own resource to avoid infinite loops
-	"workloadhardeningchecks",
-	"namespacehardeningchecks",
-}
-
 func Clone(ctx context.Context, cl client.Client, sourceNamespace, targetNamespace, suffix string) error {
 	log := logf.FromContext(ctx).WithName("namespace-cloner").WithValues("targetNamespace", targetNamespace, "suffix", suffix)
 
@@ -68,6 +52,7 @@ func Clone(ctx context.Context, cl client.Client, sourceNamespace, targetNamespa
 
 	// Now we can clone the resources, and be sure that the serviceAccounts have their rolebindings in place
 	clonedResourcesCount := 0
+	failedToClone := 0
 	for _, resource := range topLevelResources {
 
 		// Skip resources which automatically created in each namespace
@@ -75,7 +60,6 @@ func Clone(ctx context.Context, cl client.Client, sourceNamespace, targetNamespa
 			(resource.GetKind() == "ConfigMap" && resource.GetName() == "kube-root-ca.crt") {
 			continue
 		}
-		clonedResourcesCount++
 
 		log.V(3).Info(fmt.Sprintf("cloning %s/%s", resource.GetKind(), resource.GetName()))
 
@@ -123,13 +107,25 @@ func Clone(ctx context.Context, cl client.Client, sourceNamespace, targetNamespa
 
 		err = cl.Create(ctx, clonedResource)
 		if err != nil {
-			log.Error(err, fmt.Sprintf("error creating %s/%s", resource.GetKind(), resource.GetName()))
+			failedToClone++
+			log.Error(
+				err,
+				fmt.Sprintf("error creating %s/%s", resource.GetKind(), resource.GetName()),
+				"kind", resource.GetKind(),
+				"name", resource.GetName(),
+			)
 		} else {
+			clonedResourcesCount++
 			log.V(3).Info(fmt.Sprintf("created %s/%s", resource.GetKind(), resource.GetName()))
 		}
 	}
 
-	log.Info("namespace cloned", "clonedResources", clonedResourcesCount, "clondedClusterRoleBindings", clonedClusterRoleBindings)
+	log.Info(
+		"namespace cloned",
+		"clonedResources", clonedResourcesCount,
+		"clondedClusterRoleBindings", clonedClusterRoleBindings,
+		"failedResources", failedToClone,
+	)
 
 	return nil
 }

@@ -20,6 +20,22 @@ var dynamicClient *dynamic.DynamicClient
 var discoveryClient *discovery.DiscoveryClient
 var namespacedResources []*v1.APIResourceList
 
+var resourcesToSkip = []string{
+	"bindings",
+	"localsubjectaccessreviews",
+	"endpointslices",
+	"endpoints",
+	"events",
+	"ingresses",
+	"httproutes",
+	"gateways",
+	"podmetrics",
+	"controllerrevisions",
+	// exclude our own resource to avoid infinite loops
+	"workloadhardeningchecks",
+	"namespacehardeningchecks",
+}
+
 func init() {
 	dynamicClient = dynamic.NewForConfigOrDie(config.GetConfigOrDie())
 	discoveryClient = discovery.NewDiscoveryClientForConfigOrDie(config.GetConfigOrDie())
@@ -77,7 +93,7 @@ func getAllResources(ctx context.Context, namespace string) map[string]*unstruct
 			}
 
 			if slices.Contains(resourcesToSkip, strings.ToLower(resourceType.Name)) || strings.Contains(resourceType.Name, "/") {
-				log.V(2).Info("skipping resource", "resourceName", resourceType.Name)
+				log.V(2).Info("skipping resource", "resourceKind", resourceType.Kind, "resourceName", resourceType.Name)
 				continue
 			}
 			groupVersion, err := schema.ParseGroupVersion(resourceList.GroupVersion)

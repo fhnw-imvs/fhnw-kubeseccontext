@@ -75,13 +75,13 @@ orakel:
     labels: {}
 
   # -- The default resource usage of the controller pod, this is set to a low value, so that the controller can run on smaller clusters.
-  resources: 
-    limits:
-      cpu: 500m
-      memory: 128Mi
-    requests:
-      cpu: 10m
-      memory: 64Mi
+  resources:  {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 10m
+  #   memory: 64Mi
 
   # -- Liveness probe using the default /healthz endpoint provided by the controller-runtime library.
   livenessProbe:
@@ -99,7 +99,7 @@ orakel:
     periodSeconds: 10
 
   # -- Additional volumes on the output Deployment definition.
-  volumes: 
+  volumes:
   - name: webhook-cert
     secret:
       defaultMode: 420
@@ -110,7 +110,7 @@ orakel:
       secretName: metrics-server-cert
 
   # -- Additional volumeMounts on the output Deployment definition.
-  volumeMounts: 
+  volumeMounts:
   - mountPath: /tmp/k8s-webhook-server/serving-certs
     name: webhook-cert
     readOnly: true
