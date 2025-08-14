@@ -48,7 +48,7 @@ helm registry login ghcr.io -u <your-username>
 
 Since the container image is also hosted on the same registry, you can use the same credentials to pull the image used by the operator, but need to create the ImagePullSecret manually, as the intention is to make both the chart and the image available to the public.
 
-Just make sure to set the `imagePullSecrets` in the `global` section of the values file, or use the `--set global.imagePullSecrets[0].name=<your-secret-name>` flag when installing the chart.
+Just make sure to set the `imagePullSecrets` in the `global` section of the values file, or use the `--set-json 'global.imagePullSecrets=[{name: <your-secret-name>]}'` flag when installing the chart.
 
 ##  Usage
 
